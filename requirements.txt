@@ -1,0 +1,5 @@
+streamlit
+pytest
+pypandoc
+markdown
+streamlit-pdf-viewer
