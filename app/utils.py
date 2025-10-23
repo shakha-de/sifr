@@ -1,6 +1,8 @@
+import csv
 import os
-import pypandoc
 from pathlib import Path
+
+import pypandoc
 
 def find_pdfs_in_submission(submission_path):
     """Find all PDF files in the submission directory."""
@@ -54,3 +56,39 @@ $$\\underline{{\\text{{ANMERKUNGEN}}}}$$
         if os.path.exists(temp_md):
             os.remove(temp_md)
         return False
+
+
+def _format_points(points: float) -> str:
+    """Format points for CSV storage without trailing zeros."""
+    text = f"{points:.2f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def update_marks_csv(root_dir: str | Path, submission_id: str, points: float, status: str = "FINAL_MARK") -> None:
+    """Update points and status for a submission inside marks.csv."""
+    marks_path = Path(root_dir) / "marks.csv"
+    if not marks_path.exists():
+        raise FileNotFoundError(f"marks.csv nicht gefunden unter {marks_path}")
+
+    rows = []
+    updated = False
+
+    with marks_path.open("r", encoding="utf-8", newline="") as infile:
+        reader = csv.reader(infile)
+        rows = list(reader)
+
+    for row in rows[1:]:
+        if row and row[0] == submission_id:
+            row[4] = _format_points(points)
+            row[5] = status
+            updated = True
+            break
+
+    if not updated:
+        raise ValueError(f"Kein Eintrag für Submission-ID {submission_id} in marks.csv gefunden")
+
+    with marks_path.open("w", encoding="utf-8", newline="") as outfile:
+        writer = csv.writer(outfile)
+        writer.writerows(rows)

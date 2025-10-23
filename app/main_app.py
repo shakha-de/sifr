@@ -20,7 +20,7 @@ try:
         save_feedback,
         scan_and_insert_submissions,
     )
-    from app.utils import find_pdfs_in_submission, generate_feedback_pdf
+    from app.utils import find_pdfs_in_submission, generate_feedback_pdf, update_marks_csv
 except ImportError:  # Fallback when running as a script inside the package folder
     from config import get_data_dir
     from db import (
@@ -35,7 +35,7 @@ except ImportError:  # Fallback when running as a script inside the package fold
         save_feedback,
         scan_and_insert_submissions,
     )
-    from utils import find_pdfs_in_submission, generate_feedback_pdf
+    from utils import find_pdfs_in_submission, generate_feedback_pdf, update_marks_csv
 
 
 DATA_ROOT = get_data_dir()
@@ -151,6 +151,11 @@ if st.session_state.available_roots:
         st.session_state.current_root = display_root
         st.session_state.pop("submission_selector", None)
         st.session_state.force_rescan = True
+
+    # Button to edit marks
+    if st.sidebar.button("Marks bearbeiten", key="edit_marks_btn"):
+        st.switch_page("pages/marks_editor.py")
+
 else:
     st.sidebar.info("Bitte lade ein Archive, um zu starten.")
 
@@ -195,6 +200,15 @@ def build_submission_label(row):
 submission_labels = [build_submission_label(row) for row in filtered_submissions]
 submission_id_map = {label: row[0] for label, row in zip(submission_labels, filtered_submissions)}
 
+# Prepare defaults so downstream widgets always have defined values
+submission_row = None
+submission_path = ""
+group_name = ""
+name = ""
+current_exercise_name = ""
+points_key = ""
+markdown_key = ""
+
 # Keep dropdown and buttons in sync
 def update_submission_selection(label: str) -> None:
     st.session_state.submission_selector = label
@@ -235,6 +249,8 @@ else:
     group_name = submission_row[2]
     name = submission_row[3]
     current_exercise_name = submission_row[4]
+    points_key = f"points_input_{submission_id}"
+    markdown_key = f"markdown_area_new_{submission_id}"
 
     # Initialize feedback state for this submission
     if "active_submission_id" not in st.session_state or st.session_state.active_submission_id != submission_id:
@@ -330,9 +346,6 @@ else:
         initial_markdown = (feedback[1] or "") if feedback else ""
 
         # Dynamische Keys pro Abgabe
-        points_key = f"points_input_{submission_id}"
-        markdown_key = f"markdown_area_new_{submission_id}"
-
         # Stelle sicher, dass die initialen Werte beim ersten Besuch gesetzt werden
         if points_key not in st.session_state:
             st.session_state[points_key] = initial_points
@@ -512,8 +525,22 @@ if submission_labels:
 
     with col3:
         if st.button("Korrigiert", key="mark_corrected_btn"):
-            save_feedback(submission_id, points, st.session_state.current_markdown, None)
-            st.success("Korrektur gespeichert.")
-            st.rerun()
+            points_value = st.session_state.get(points_key, 0.0)
+            markdown_value = st.session_state.get(markdown_key, "")
+            submission_identifier = group_name.split("_")[-1] if "_" in group_name else group_name
+
+            if not current_root:
+                st.error("Kein Arbeitsordner ausgewählt.")
+            else:
+                try:
+                    update_marks_csv(current_root, submission_identifier, points_value, "FINAL_MARK")
+                except (FileNotFoundError, ValueError) as error:
+                    st.error(str(error))
+                else:
+                    save_feedback(submission_id, points_value, markdown_value, None)
+                    st.session_state.current_markdown = markdown_value
+                    st.session_state.current_points = points_value
+                    st.success("Korrektur gespeichert und marks.csv aktualisiert.")
+                    st.rerun()
 
 st.sidebar.markdown("")
