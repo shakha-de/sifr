@@ -29,7 +29,7 @@ def generate_feedback_pdf(markdown_content, name, points, output_path, sheet_num
 ---
 
 
-$$\\underline{{\\textbf{{Anmerkungen}}}}$$
+$$\\underline{{\\textbf{{ANMERKUNGEN}}}}$$
 
 {markdown_content or '_Keine Anmerkungen eingetragen._'}
 
@@ -46,10 +46,14 @@ $$\\underline{{\\textbf{{Anmerkungen}}}}$$
             outputfile=output_path,
             extra_args=[
                 "--pdf-engine=xelatex",
-                "-V", "geometry:margin=2.5cm",
-                "-V", "fontsize=12pt",
-                "-V", "mainfont=DejaVuSerif",
-                "-V", "monofont=DejaVuSansMono",
+                "-V",
+                "geometry:margin=2.5cm",
+                "-V",
+                "fontsize=12pt",
+                "-V",
+                "mainfont=DejaVuSerif",
+                "-V",
+                "monofont=DejaVuSansMono",
             ],
         )
         temp_md_path.unlink(missing_ok=True)

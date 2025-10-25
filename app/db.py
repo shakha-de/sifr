@@ -9,7 +9,7 @@ except ImportError:  # Falls Modul direkt gestartet wird
     from config import get_data_dir
 
 
-DB_PATH = get_data_dir() / "corrections.db"
+DB_PATH = get_data_dir() /"db/intern/corrections.db"
 
 
 def _resolve_db_path() -> Path:
