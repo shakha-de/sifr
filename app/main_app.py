@@ -152,10 +152,6 @@ if st.session_state.available_roots:
         st.session_state.pop("submission_selector", None)
         st.session_state.force_rescan = True
 
-    # Button to edit marks
-    if st.sidebar.button("Marks bearbeiten", key="edit_marks_btn"):
-        st.switch_page("pages/marks_editor.py")
-
 else:
     st.sidebar.info("Bitte lade ein Archive, um zu starten.")
 
@@ -440,7 +436,7 @@ Hier eine kurze Zusammenfassung...
             if st.button("Add Meme", key=f"add_meme_btn_{submission_id}"):
                 if meme_link:
                     current_md = st.session_state[markdown_key]
-                    st.session_state[f"pending_markdown_{submission_id}"] = current_md + f"\n\n![]({meme_link})"
+                    st.session_state[f"pending_markdown_{submission_id}"] = current_md + f"\n\n$\\hfill$ ![]({meme_link}) $\\hfill$ "
                     st.success("Meme hinzugefügt!")
                     st.rerun()
                 else:

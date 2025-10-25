@@ -10,7 +10,7 @@ Sifr is a Streamlit-based grading assistant for exploring student submissions, a
 ## Getting Started
 We strongly recommend isolating the environment with either [`uv`](https://github.com/astral-sh/uv) or Docker. Both capture dependencies precisely and avoid accidental differences across machines. Direct `pip` usage is available but should be treated as a fallback.
 
-### Option 1: `uv` (recommended)
+### Option 1: `uv` (recommended if you already have LaTeX distribution on your system)
 1. Install `uv` if needed: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 2. Sync dependencies into an isolated environment:
 	```bash
