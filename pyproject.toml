@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "pytest>=8.4.2",
-    "streamlit>=1.50.0",
+    "streamlit[pdf]>=1.50.0",
     "streamlit-pdf-viewer>=0.0.26",
     "pypandoc>=1.13",
     "markdown>=3.6",

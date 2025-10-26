@@ -41,7 +41,17 @@ except ImportError:  # Fallback when running as a script inside the package fold
 DATA_ROOT = get_data_dir()
 DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
-st.set_page_config(page_title="Sifr", layout="wide")
+st.set_page_config(
+    page_title="Sifr | Korrektur | Feedback Dateien erstellen",
+    page_icon="app/static/img/sifr_logo.png",
+    layout="wide",
+    initial_sidebar_state="auto",
+    menu_items={
+        "Get Help": 'https://github.com/shakha-de/sifr',
+        'Report a bug': "https://github.com/shakha-de/sifr/issues",
+        'About': """# sifr - is a grading tool.  based on [Streamlit](https://streamlit.io/) with Markdown & $\\LaTeX$ support."""
+        }
+    )
 
 
 def find_candidate_roots(base_dir: os.PathLike[str] | str = DATA_ROOT) -> list[str]:
