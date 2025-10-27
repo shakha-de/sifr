@@ -2,11 +2,7 @@ import sqlite3
 import os
 import csv
 from pathlib import Path
-
-try:
-    from app.config import get_data_dir
-except ImportError:  # Falls Modul direkt gestartet wird
-    from config import get_data_dir
+from config import get_data_dir
 
 
 DB_PATH = get_data_dir() /"db/intern/corrections.db"
@@ -22,73 +18,127 @@ def init_db():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
-    # Table for submissions
+    # Table for sheets
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS submissions (
-            id INTEGER PRIMARY KEY,
-            path TEXT UNIQUE,
-            group_name TEXT,
-            exercise TEXT,
-            status TEXT DEFAULT 'not_started'
+            CREATE TABLE IF NOT EXISTS sheets  (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,        -- z.B. "Sheet-Blatt 1"
+                description TEXT,
+                release_date TEXT,                -- ISO date string
+                created_at TEXT DEFAULT (datetime('now'))
         )
     ''')
     
-    # Add name column if not exists
-    try:
-        cursor.execute('ALTER TABLE submissions ADD COLUMN name TEXT')
-    except sqlite3.OperationalError:
-        pass  # Column already exists
+    # Table for exercises per Sheet
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS exercises (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+            code TEXT NOT NULL,               -- z.B. "Exercise-1" oder "1.1"
+            title TEXT,
+            max_points REAL NOT NULL DEFAULT 0.0,
+            UNIQUE(sheet_id, code)
+)
+    ''')
     
-    # Table for feedback
+    # Table for error codes per Sheet
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS error_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+            code TEXT NOT NULL,               
+            description TEXT,
+            deduction REAL NOT NULL DEFAULT 0.0,
+            comment TEXT,
+            UNIQUE(sheet_id, code)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS submissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            external_id TEXT,
+            sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+            exercise_id INTEGER REFERENCES exercises(id) ON DELETE SET NULL,
+            group_name TEXT,
+            submitter TEXT,
+            path TEXT,
+            status TEXT NOT NULL DEFAULT 'SUBMITTED',
+            submitted_at TEXT,
+            file_count INTEGER DEFAULT 0,
+            file_hash TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            CHECK (status IN ('SUBMITTED', 'PROVISIONAL_MARK', 'FINAL_MARK'))
+        )    
+    ''')
+
+    # Table for single files of submissions
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            submission_id INTEGER NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+            filename TEXT NOT NULL,
+            relative_path TEXT,     
+            size_bytes INTEGER,
+            mime_type TEXT,
+            uploaded_at TEXT DEFAULT (datetime('now'))
+        )
+    ''')
+
+    # Table for feedbacks
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS feedback (
-            id INTEGER PRIMARY KEY,
-            submission_id INTEGER,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            submission_id INTEGER NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+            sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE, -- redundanz für schnelles Filtern
+            exercise_id INTEGER REFERENCES exercises(id) ON DELETE SET NULL,
+            grader TEXT,                 -- wer bewertet hat
+            points REAL,                 -- erreichte Punkte (kann NULL sein, wenn noch offen)
+            markdown_content TEXT,
+            pdf_path TEXT,               -- Pfad zur erzeugten Feedback-PDF
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT
+        )
+    ''')
+
+    # Table for errors in feedbacks
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS feedback_errors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            feedback_id INTEGER NOT NULL REFERENCES feedback(id) ON DELETE CASCADE,
+            error_code_id INTEGER NOT NULL REFERENCES error_codes(id) ON DELETE CASCADE,
+            count INTEGER NOT NULL DEFAULT 1,
+            comment TEXT
+        )
+    ''')
+
+    # Table for saving history of feedbacks
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS feedback_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            feedback_id INTEGER NOT NULL REFERENCES feedback(id) ON DELETE CASCADE,
+            grader TEXT,
             points REAL,
             markdown_content TEXT,
             pdf_path TEXT,
-            FOREIGN KEY (submission_id) REFERENCES submissions (id)
+            changed_at TEXT DEFAULT (datetime('now'))
         )
     ''')
-    
-    # Table for error codes
+
+    # Table for persistant saving grader state
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS error_codes (
-            id INTEGER PRIMARY KEY,
-            code TEXT UNIQUE,
-            description TEXT,
-            abzug_punkte REAL DEFAULT 0.0,
-            kommentar TEXT
+        CREATE TABLE IF NOT EXISTS app_state (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TEXT DEFAULT (datetime('now'))
         )
     ''')
-    
-    # Add columns if not exist
-    try:
-        cursor.execute('ALTER TABLE error_codes ADD COLUMN abzug_punkte REAL DEFAULT 0.0')
-    except sqlite3.OperationalError:
-        pass
-    try:
-        cursor.execute('ALTER TABLE error_codes ADD COLUMN kommentar TEXT')
-    except sqlite3.OperationalError:
-        pass
-    
-    # Table for exercise max points
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS exercise_max_points (
-            exercise TEXT PRIMARY KEY,
-            max_points REAL
-        )
-    ''')
-    
-    # Insert default error codes
-    default_errors = [
-        ('E001', 'Syntaxfehler', 0.5, 'Es gibt einen Syntaxfehler im Code.'),
-        ('E002', 'Logikfehler', 1.0, 'Die Logik der Lösung ist fehlerhaft.'),
-        ('E003', 'Unvollständige Lösung', 0.5, 'Die Lösung ist nicht vollständig.'),
-        ('E004', 'Falsche Berechnung', 0.5, 'Eine Berechnung ist falsch.'),
-        ('E005', 'Fehlende Dokumentation', 0.5, 'Die Dokumentation fehlt oder ist unzureichend.'),
-    ]
-    cursor.executemany('INSERT OR IGNORE INTO error_codes (code, description, abzug_punkte, kommentar) VALUES (?, ?, ?, ?)', default_errors)
+
+    # Indexes 
+    cursor.execute("CREATE INDEX idx_submissions_sheet_ex ON submissions(sheet_id, exercise_id)")
+    cursor.execute("CREATE INDEX idx_files_submission ON files(submission_id)")
+    cursor.execute("CREATE INDEX idx_feedback_submission ON feedback(submission_id)")
+    cursor.execute("CREATE INDEX idx_error_codes_sheet ON error_codes(sheet_id)")
     
     conn.commit()
     conn.close()

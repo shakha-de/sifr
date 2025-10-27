@@ -18,7 +18,7 @@ We strongly recommend isolating the environment with either [`uv`](https://githu
 	```
 3. Launch the Streamlit app:
 	```bash
-	uv run streamlit run app/main_app.py
+	uv run streamlit run app/🖎_Korrektur.py
 	```
 
 `uv` reads `pyproject.toml`, keeps lock files up-to-date, and lets you run `uv run pytest` for the test suite.
