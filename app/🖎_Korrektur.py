@@ -19,6 +19,8 @@ try:
         save_exercise_max_points,
         save_feedback,
         scan_and_insert_submissions,
+        save_grader_state,
+        load_grader_state,
     )
     from app.utils import find_pdfs_in_submission, generate_feedback_pdf, update_marks_csv
 except ImportError:  # Fallback when running as a script inside the package folder
@@ -34,6 +36,8 @@ except ImportError:  # Fallback when running as a script inside the package fold
         save_exercise_max_points,
         save_feedback,
         scan_and_insert_submissions,
+        save_grader_state,
+        load_grader_state,
     )
     from utils import find_pdfs_in_submission, generate_feedback_pdf, update_marks_csv
 
@@ -179,20 +183,31 @@ submissions = get_submissions()
 if not submissions and st.session_state.get("archive_loaded"):
     st.warning("Keine Submissions gefunden. Bitte Archive überprüfen.")
 total_submissions = len(submissions)
-corrected = sum(1 for row in submissions if row[5] == "completed")
+corrected = sum(1 for row in submissions if row[5] == "graded")
 st.sidebar.write(f"Korrekturstand: {corrected}/{total_submissions}")
 
 # Filter by exercise
 exercise_names = sorted({row[4] for row in submissions})
 exercise_options = ["Alle"] + exercise_names if exercise_names else ["Alle"]
+
+# Lade den letzten Filter aus der Datenbank
+saved_exercise_filter = load_grader_state("exercise_filter", "Alle")
+if saved_exercise_filter not in exercise_options:
+    saved_exercise_filter = "Alle"
+
 if st.session_state.exercise_filter not in exercise_options:
-    st.session_state.exercise_filter = "Alle"
+    st.session_state.exercise_filter = saved_exercise_filter
 
 selected_exercise = st.sidebar.selectbox(
     "Aufgabe filtern",
     options=exercise_options,
+    index=exercise_options.index(st.session_state.exercise_filter) if st.session_state.exercise_filter in exercise_options else 0,
     key="exercise_filter",
 )
+
+# Speichere den Filter wenn er sich ändert
+if selected_exercise != load_grader_state("exercise_filter", "Alle"):
+    save_grader_state("exercise_filter", selected_exercise)
 
 filtered_submissions = [
     row for row in submissions if selected_exercise == "Alle" or row[4] == selected_exercise
@@ -200,7 +215,7 @@ filtered_submissions = [
 
 # Build submission labels
 def build_submission_label(row):
-    status_flag = "[X]" if row[5] == "completed" else "[ ]"
+    status_flag = "[X]" if row[5] == "graded" else "[ ]"
     return f"{status_flag} {row[3]} ({row[4]})"
 
 submission_labels = [build_submission_label(row) for row in filtered_submissions]
@@ -215,37 +230,52 @@ current_exercise_name = ""
 points_key = ""
 markdown_key = ""
 
-# Keep dropdown and buttons in sync
-def update_submission_selection(label: str) -> None:
-    st.session_state.submission_selector = label
-
 # Handle no submissions
 if not submission_labels:
     st.sidebar.warning("Keine Abgaben verfügbar. Bitte ein Archive hochladen oder den Filter anpassen.")
 else:
-    # Ensure valid selection
+    # Lade die letzte Auswahl aus der Datenbank
+    saved_submission_id = load_grader_state("current_submission_id")
     current_selection = st.session_state.get("submission_selector")
+    
+    # Wenn keine Auswahl im session state, versuche aus Datenbank zu laden
     if not current_selection or current_selection not in submission_labels:
-        update_submission_selection(submission_labels[0])
+        if saved_submission_id:
+            try:
+                saved_id = int(saved_submission_id)
+                # Finde das entsprechende Label
+                for row in filtered_submissions:
+                    if row[0] == saved_id:
+                        matching_label = next(
+                            (label for label, id in submission_id_map.items() if id == saved_id),
+                            None
+                        )
+                        if matching_label and matching_label in submission_labels:
+                            st.session_state.submission_selector = matching_label
+                            break
+            except (ValueError, StopIteration):
+                pass
+        
+        # Wenn immer noch keine Auswahl, verwende erste
+        if not st.session_state.get("submission_selector") or st.session_state.submission_selector not in submission_labels:
+            st.session_state.submission_selector = submission_labels[0]
 
-    # Sync widget value before rendering the selectbox to avoid Streamlit state errors
-    if (
-        st.session_state.submission_selector
-        and st.session_state.get("submission_selector_widget") != st.session_state.submission_selector
-    ):
-        st.session_state["submission_selector_widget"] = st.session_state.submission_selector
-
-    # Submission selector
+    # Submission selector - use current value directly
+    current_label = st.session_state.submission_selector if st.session_state.submission_selector in submission_labels else submission_labels[0]
+    current_index = submission_labels.index(current_label)
+    
     selected_label = st.sidebar.selectbox(
         "Wähle eine Abgabe",
         options=submission_labels,
-        index=submission_labels.index(st.session_state.submission_selector) if st.session_state.submission_selector in submission_labels else 0,
-        key="submission_selector_widget"
+        index=current_index,
+        key=f"submission_select_{st.session_state.current_root}_{st.session_state.exercise_filter}"
     )
 
-    # Update session state if selection changed
+    # Update session state if selection changed and save to DB
     if selected_label != st.session_state.submission_selector:
-        update_submission_selection(selected_label)
+        st.session_state.submission_selector = selected_label
+        submission_id = submission_id_map[selected_label]
+        save_grader_state("current_submission_id", str(submission_id))
         st.rerun()
 
     # Get current submission
@@ -513,20 +543,26 @@ if submission_labels:
     current_label = st.session_state.get("submission_selector")
     if current_label not in submission_labels:
         current_label = submission_labels[0]
-        update_submission_selection(current_label)
+        st.session_state.submission_selector = current_label
     col1, col2, col3 = st.sidebar.columns(3)
     current_index = submission_labels.index(current_label)
 
     with col1:
         if st.button("Letzte Abgabe", key="prev_submission_btn"):
             prev_index = (current_index - 1) % len(submission_labels)
-            update_submission_selection(submission_labels[prev_index])
+            prev_label = submission_labels[prev_index]
+            st.session_state.submission_selector = prev_label
+            submission_id = submission_id_map[prev_label]
+            save_grader_state("current_submission_id", str(submission_id))
             st.rerun()
 
     with col2:
         if st.button("Nächste Abgabe", key="next_submission_btn"):
             next_index = (current_index + 1) % len(submission_labels)
-            update_submission_selection(submission_labels[next_index])
+            next_label = submission_labels[next_index]
+            st.session_state.submission_selector = next_label
+            submission_id = submission_id_map[next_label]
+            save_grader_state("current_submission_id", str(submission_id))
             st.rerun()
 
     with col3:

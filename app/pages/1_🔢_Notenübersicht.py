@@ -29,22 +29,19 @@ if not marks_path.exists():
 # Load the CSV
 try:
     df = pd.read_csv(marks_path)
-    st.write("Current marks.csv:")
-    st.dataframe(df)
+    st.subheader("Edit the CSV")
+    edited_df = st.data_editor(df, num_rows="dynamic")
 except Exception as e:
     st.error(f"Error loading CSV: {e}")
     st.stop()
 
-# Edit the dataframe
-st.subheader("Edit the CSV")
-edited_df = st.data_editor(df, num_rows="dynamic")
-
-if st.button("Save Changes"):
+left, right = st.columns(2, vertical_alignment="center")
+if left.button("Save Changes", type="primary", icon=":material/save:"):
     try:
         edited_df.to_csv(marks_path, index=False)
         st.success("Changes saved successfully!")
     except Exception as e:
         st.error(f"Error saving CSV: {e}")
 
-if st.button("Back to Main"):
+if right.button("Zurück zu Korrekturen", icon=":material/arrow_back:" ):
     st.switch_page("main_app.py")

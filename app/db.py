@@ -1,11 +1,12 @@
-import sqlite3
-import os
 import csv
+import os
 from pathlib import Path
+import sqlite3
+
 from config import get_data_dir
 
 
-DB_PATH = get_data_dir() /"db/intern/corrections.db"
+DB_PATH = get_data_dir() /"db/intern/grading.db"
 
 
 def _resolve_db_path() -> Path:
@@ -63,12 +64,12 @@ def init_db():
             group_name TEXT,
             submitter TEXT,
             path TEXT,
-            status TEXT NOT NULL DEFAULT 'SUBMITTED',
+            status TEXT NOT NULL DEFAULT 'NOT_STARTED',
             submitted_at TEXT,
             file_count INTEGER DEFAULT 0,
             file_hash TEXT,
             created_at TEXT DEFAULT (datetime('now')),
-            CHECK (status IN ('SUBMITTED', 'PROVISIONAL_MARK', 'FINAL_MARK'))
+            CHECK (status IN ('SUBMITTED', 'PROVISIONAL_MARK', 'FINAL_MARK', 'RESUBMITTED', 'ABSEND', 'SICK'))
         )    
     ''')
 
@@ -125,9 +126,9 @@ def init_db():
         )
     ''')
 
-    # Table for persistant saving grader state
+    # Table for saving grader state (which submission is currently being worked on)
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS app_state (
+        CREATE TABLE IF NOT EXISTS grader_state (
             key TEXT PRIMARY KEY,
             value TEXT,
             updated_at TEXT DEFAULT (datetime('now'))
@@ -135,10 +136,10 @@ def init_db():
     ''')
 
     # Indexes 
-    cursor.execute("CREATE INDEX idx_submissions_sheet_ex ON submissions(sheet_id, exercise_id)")
-    cursor.execute("CREATE INDEX idx_files_submission ON files(submission_id)")
-    cursor.execute("CREATE INDEX idx_feedback_submission ON feedback(submission_id)")
-    cursor.execute("CREATE INDEX idx_error_codes_sheet ON error_codes(sheet_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_submissions_sheet_ex ON submissions(sheet_id, exercise_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_submission ON files(submission_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_submission ON feedback(submission_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_error_codes_sheet ON error_codes(sheet_id)")
     
     conn.commit()
     conn.close()
@@ -158,8 +159,19 @@ def scan_and_insert_submissions(root_dir):
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
     
+    # Get sheet_id from root_dir name
+    sheet_name = os.path.basename(root_dir)
+    cursor.execute('SELECT id FROM sheets WHERE name = ?', (sheet_name,))
+    sheet_row = cursor.fetchone()
+    if not sheet_row:
+        # Insert new sheet if not exists
+        cursor.execute('INSERT INTO sheets (name) VALUES (?)', (sheet_name,))
+        sheet_id = cursor.lastrowid
+    else:
+        sheet_id = sheet_row[0]
+    
     # Remember current submission status per path to preserve correction progress
-    cursor.execute('SELECT path, status FROM submissions')
+    cursor.execute('SELECT path, status FROM submissions WHERE sheet_id = ?', (sheet_id,))
     existing_status_by_path = {row[0]: row[1] for row in cursor.fetchall()}
     
     csv_path = os.path.join(root_dir, 'marks.csv')
@@ -170,27 +182,44 @@ def scan_and_insert_submissions(root_dir):
     for exercise_dir in os.listdir(root_dir):
         exercise_path = os.path.join(root_dir, exercise_dir)
         if os.path.isdir(exercise_path) and exercise_dir.lower().startswith(('excercise-', 'exercise-')):
-            exercise = exercise_dir
+            exercise_code = exercise_dir
+            # Get exercise_id
+            cursor.execute('SELECT id FROM exercises WHERE sheet_id = ? AND code = ?', (sheet_id, exercise_code))
+            exercise_row = cursor.fetchone()
+            if not exercise_row:
+                # Insert new exercise if not exists
+                cursor.execute('INSERT INTO exercises (sheet_id, code) VALUES (?, ?)', (sheet_id, exercise_code))
+                exercise_id = cursor.lastrowid
+            else:
+                exercise_id = exercise_row[0]
             for submission_dir in os.listdir(exercise_path):
                 submission_path = os.path.join(exercise_path, submission_dir)
                 if os.path.isdir(submission_path):
                     # Extract submissionid from folder name (last part after last underscore)
                     parts = submission_dir.split('_')
                     submissionid = parts[-1] if parts else submission_dir
-                    name = names.get(submissionid, submission_dir)
+                    submitter = names.get(submissionid, submission_dir)
                     status = existing_status_by_path.get(submission_path, 'not_started')
-                    cursor.execute(
-                        '''
-                        INSERT INTO submissions (path, group_name, name, exercise, status)
-                        VALUES (?, ?, ?, ?, ?)
-                        ON CONFLICT(path) DO UPDATE SET
-                            group_name = excluded.group_name,
-                            name = excluded.name,
-                            exercise = excluded.exercise,
-                            status = excluded.status
-                        ''',
-                        (submission_path, submission_dir, name, exercise, status),
-                    )
+                    
+                    # Check if submission already exists
+                    cursor.execute('SELECT id FROM submissions WHERE path = ?', (submission_path,))
+                    existing = cursor.fetchone()
+                    
+                    if existing:
+                        # Update existing submission
+                        cursor.execute(
+                            '''UPDATE submissions SET
+                                group_name = ?, submitter = ?, sheet_id = ?, exercise_id = ?, status = ?
+                                WHERE path = ?''',
+                            (submission_dir, submitter, sheet_id, exercise_id, status, submission_path)
+                        )
+                    else:
+                        # Insert new submission
+                        cursor.execute(
+                            '''INSERT INTO submissions (path, group_name, submitter, sheet_id, exercise_id, status)
+                            VALUES (?, ?, ?, ?, ?, ?)''',
+                            (submission_path, submission_dir, submitter, sheet_id, exercise_id, status)
+                        )
                     discovered_paths.add(submission_path)
 
     # Remove submissions that no longer exist on disk
@@ -204,7 +233,11 @@ def scan_and_insert_submissions(root_dir):
 def get_submissions():
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
-    cursor.execute('SELECT id, path, group_name, name, exercise, status FROM submissions')
+    cursor.execute('''
+        SELECT s.id, s.path, s.group_name, s.submitter, e.code, s.status
+        FROM submissions s
+        JOIN exercises e ON s.exercise_id = e.id
+    ''')
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -220,16 +253,30 @@ def get_feedback(submission_id):
 def save_feedback(submission_id, points, markdown_content, pdf_path):
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
-    cursor.execute('INSERT OR REPLACE INTO feedback (submission_id, points, markdown_content, pdf_path) VALUES (?, ?, ?, ?)',
-                   (submission_id, points, markdown_content, pdf_path))
-    cursor.execute('UPDATE submissions SET status = ? WHERE id = ?', ('completed', submission_id))
+    
+    # Get sheet_id and exercise_id from submission
+    cursor.execute('SELECT sheet_id, exercise_id FROM submissions WHERE id = ?', (submission_id,))
+    submission_data = cursor.fetchone()
+    if not submission_data:
+        conn.close()
+        raise ValueError(f"Submission with id {submission_id} not found")
+    
+    sheet_id, exercise_id = submission_data
+    
+    # Insert or update feedback with all required fields
+    cursor.execute('''
+        INSERT OR REPLACE INTO feedback (submission_id, sheet_id, exercise_id, points, markdown_content, pdf_path)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (submission_id, sheet_id, exercise_id, points, markdown_content, pdf_path))
+    
+    cursor.execute('UPDATE submissions SET status = ? WHERE id = ?', ('graded', submission_id))
     conn.commit()
     conn.close()
 
 def get_error_codes():
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
-    cursor.execute('SELECT code, description, abzug_punkte, kommentar FROM error_codes')
+    cursor.execute('SELECT code, description, deduction, comment FROM error_codes')
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -237,7 +284,7 @@ def get_error_codes():
 def get_exercise_max_points():
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
-    cursor.execute('SELECT exercise, max_points FROM exercise_max_points')
+    cursor.execute('SELECT code, max_points FROM exercises')
     rows = cursor.fetchall()
     conn.close()
     return {row[0]: row[1] for row in rows}
@@ -250,11 +297,11 @@ def save_exercise_max_points(exercise, max_points):
     conn.commit()
     conn.close()
 
-def add_error_code(code, description, abzug_punkte, kommentar):
+def add_error_code(code, description, deduction, comment):
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO error_codes (code, description, abzug_punkte, kommentar) VALUES (?, ?, ?, ?)',
-                   (code, description, abzug_punkte, kommentar))
+    cursor.execute('INSERT INTO error_codes (code, description, deduction, comment) VALUES (?, ?, ?, ?)',
+                   (code, description, deduction, comment))
     conn.commit()
     conn.close()
 
@@ -262,5 +309,30 @@ def delete_error_code(code):
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
     cursor.execute('DELETE FROM error_codes WHERE code = ?', (code,))
+    conn.commit()
+    conn.close()
+
+def save_grader_state(key, value):
+    """Save a key-value pair in the grader_state table."""
+    conn = sqlite3.connect(_resolve_db_path())
+    cursor = conn.cursor()
+    cursor.execute('INSERT OR REPLACE INTO grader_state (key, value) VALUES (?, ?)', (key, value))
+    conn.commit()
+    conn.close()
+
+def load_grader_state(key, default=None):
+    """Load a value from the grader_state table by key."""
+    conn = sqlite3.connect(_resolve_db_path())
+    cursor = conn.cursor()
+    cursor.execute('SELECT value FROM grader_state WHERE key = ?', (key,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else default
+
+def delete_grader_state(key):
+    """Delete a key-value pair from the grader_state table."""
+    conn = sqlite3.connect(_resolve_db_path())
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM grader_state WHERE key = ?', (key,))
     conn.commit()
     conn.close()
