@@ -64,7 +64,7 @@ def init_db():
             group_name TEXT,
             submitter TEXT,
             path TEXT,
-            status TEXT NOT NULL DEFAULT 'NOT_STARTED',
+            status TEXT NOT NULL DEFAULT 'SUBMITTED',
             submitted_at TEXT,
             file_count INTEGER DEFAULT 0,
             file_hash TEXT,
@@ -199,7 +199,7 @@ def scan_and_insert_submissions(root_dir):
                     parts = submission_dir.split('_')
                     submissionid = parts[-1] if parts else submission_dir
                     submitter = names.get(submissionid, submission_dir)
-                    status = existing_status_by_path.get(submission_path, 'not_started')
+                    status = existing_status_by_path.get(submission_path, 'SUBMITTED')
                     
                     # Check if submission already exists
                     cursor.execute('SELECT id FROM submissions WHERE path = ?', (submission_path,))
@@ -230,14 +230,20 @@ def scan_and_insert_submissions(root_dir):
     conn.commit()
     conn.close()
 
-def get_submissions():
+def get_submissions(exercise_code: str | None = None):
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
-    cursor.execute('''
+    query = '''
         SELECT s.id, s.path, s.group_name, s.submitter, e.code, s.status
         FROM submissions s
         JOIN exercises e ON s.exercise_id = e.id
-    ''')
+    '''
+    params: tuple = ()
+    if exercise_code:
+        query += ' WHERE e.code = ?'
+        params = (exercise_code,)
+    query += ' ORDER BY s.id'
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -269,7 +275,6 @@ def save_feedback(submission_id, points, markdown_content, pdf_path):
         VALUES (?, ?, ?, ?, ?, ?)
     ''', (submission_id, sheet_id, exercise_id, points, markdown_content, pdf_path))
     
-    cursor.execute('UPDATE submissions SET status = ? WHERE id = ?', ('graded', submission_id))
     conn.commit()
     conn.close()
 
@@ -292,8 +297,9 @@ def get_exercise_max_points():
 def save_exercise_max_points(exercise, max_points):
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
-    cursor.execute('INSERT OR REPLACE INTO exercise_max_points (exercise, max_points) VALUES (?, ?)',
-                   (exercise, max_points))
+    # Update max_points in exercises table (exercise code is stored in 'code' column)
+    cursor.execute('UPDATE exercises SET max_points = ? WHERE code = ?',
+                   (max_points, exercise))
     conn.commit()
     conn.close()
 
@@ -336,3 +342,119 @@ def delete_grader_state(key):
     cursor.execute('DELETE FROM grader_state WHERE key = ?', (key,))
     conn.commit()
     conn.close()
+
+
+_REVIEW_CURRENT_SUBMISSION_KEY = "review_current_submission_id"
+
+
+def get_review_current_submission_id(default: int | None = None) -> int | None:
+    """Return the currently stored submission id for the review page."""
+    value = load_grader_state(_REVIEW_CURRENT_SUBMISSION_KEY)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def set_review_current_submission_id(submission_id: int) -> None:
+    """Persist the given submission id for the review page."""
+    save_grader_state(_REVIEW_CURRENT_SUBMISSION_KEY, str(int(submission_id)))
+
+
+def get_review_submission_ids(exercise_code: str | None = None) -> list[int]:
+    """Return ordered submission ids matching the optional exercise filter."""
+    return [row[0] for row in get_submissions(exercise_code)]
+
+
+def step_review_current_submission(step: int, exercise_code: str | None = None) -> int:
+    """Move the stored submission id by the given step within the filtered list.
+
+    The movement is clamped to the available range and the resulting id is persisted.
+    Returns the id after stepping.
+    """
+    ids = get_review_submission_ids(exercise_code)
+    if not ids:
+        raise ValueError("Keine Abgaben für den gewählten Filter vorhanden.")
+
+    try:
+        step_value = int(step)
+    except (TypeError, ValueError):
+        step_value = 0
+
+    saved_id = get_review_current_submission_id()
+    if saved_id in ids:
+        current_index = ids.index(saved_id)
+    else:
+        current_index = 0 if step_value >= 0 else len(ids) - 1
+
+    new_index = current_index + step_value
+    if new_index < 0:
+        new_index = 0
+    elif new_index >= len(ids):
+        new_index = len(ids) - 1
+
+    new_id = ids[new_index]
+    set_review_current_submission_id(new_id)
+    return new_id
+
+
+# ============================================================================
+# Navigation Helper Functions for Streamlit Apps
+# ============================================================================
+
+def navigate_submissions(submissions_list: list, exercise_filter: str | None = None) -> tuple[list, dict, dict]:
+    """
+    Build navigation maps for submissions.
+    
+    Args:
+        submissions_list: List of submission rows from get_submissions()
+        exercise_filter: Optional exercise code to filter by
+        
+    Returns:
+        Tuple of (filtered_ids, id_to_label_map, label_to_id_map)
+    """
+    # Filter submissions
+    filtered = submissions_list
+    if exercise_filter and exercise_filter != "Alle":
+        filtered = [row for row in submissions_list if row[4] == exercise_filter]
+    
+    # Build maps
+    id_to_label_map = {}
+    label_to_id_map = {}
+    submission_ids_ordered = []
+    
+    for row in filtered:
+        submission_id = row[0]
+        # row[3] is submitter name, row[4] is exercise_code
+        status_flag = "[X]" if row[5] == "graded" else "[ ]"
+        label = f"{status_flag} {row[3]} ({row[4]})"
+        
+        id_to_label_map[submission_id] = label
+        label_to_id_map[label] = submission_id
+        submission_ids_ordered.append(submission_id)
+    
+    return submission_ids_ordered, id_to_label_map, label_to_id_map
+
+
+def get_submission_index(submission_id: int, submission_ids_ordered: list) -> int:
+    """Get the index of a submission in the ordered list."""
+    try:
+        return submission_ids_ordered.index(submission_id)
+    except ValueError:
+        return 0
+
+
+def navigate_to_next(current_index: int, submission_ids_ordered: list) -> int | None:
+    """Navigate to next submission, returns new ID or None if at end."""
+    if current_index < len(submission_ids_ordered) - 1:
+        return submission_ids_ordered[current_index + 1]
+    return None
+
+
+def navigate_to_prev(current_index: int, submission_ids_ordered: list) -> int | None:
+    """Navigate to previous submission, returns new ID or None if at start."""
+    if current_index > 0:
+        return submission_ids_ordered[current_index - 1]
+    return None

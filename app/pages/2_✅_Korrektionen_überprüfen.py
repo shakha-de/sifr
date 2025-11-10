@@ -5,10 +5,12 @@ from streamlit_pdf_viewer import pdf_viewer
 
 from utils import find_pdfs_in_submission
 from db import (
-    get_submissions, 
-    get_feedback, 
-    load_grader_state, 
-    save_grader_state
+    get_submissions,
+    get_feedback,
+    load_grader_state,
+    save_grader_state,
+    get_review_current_submission_id,
+    set_review_current_submission_id,
 )
 
 
@@ -20,23 +22,31 @@ st.set_page_config(
     menu_items={
         "Get Help": "https://github.com/shakha-de/sifr",
         "Report a bug": "https://github.com/shakha-de/sifr/issues",
-        "About": """# sifr - is a grading tool.  \
-        based on [Streamlit](https://streamlit.io/) with Markdown & $\\LaTeX$ support.""",
+        "About": """# sifr - is a grading tool.  based on [Streamlit](https://streamlit.io/) with Markdown & $\\LaTeX$ support.""",
     },
 )
-
-st.sidebar.info("Hier können Sie Ihre Korrekturen überprüfen.")
 
 current_root = st.session_state.get("current_root")
 if not current_root:
     st.error("Kein aktiver Ordner wurde gewählt. Bitte wählen sie einen Arbeitsordner zuerst.")
     st.stop()
 
+
+def _build_selectbox_key(root_value: str | None, exercise_filter: str | None) -> str:
+    """Create a Streamlit widget key using only safe characters."""
+    base = f"{root_value or ''}_{exercise_filter or 'Alle'}"
+    sanitized = "".join(ch if ch.isalnum() else "_" for ch in base)
+    sanitized = sanitized or "default"
+    return f"review_submission_select_{sanitized}"
+
+
 # Initialize session state
-if "review_submission_selector" not in st.session_state:
-    st.session_state.review_submission_selector = None
+if "review_submission_id" not in st.session_state:
+    st.session_state.review_submission_id = None
 if "review_exercise_filter" not in st.session_state:
     st.session_state.review_exercise_filter = "Alle"
+if "review_nav_action" not in st.session_state:
+    st.session_state.review_nav_action = None
 
 # Load submissions
 submissions = get_submissions()
@@ -78,6 +88,7 @@ def build_submission_label(row):
     return f"{status_flag} {row[3]} ({row[4]})"
 
 submission_labels = [build_submission_label(row) for row in filtered_submissions]
+selectbox_key = _build_selectbox_key(st.session_state.get("current_root"), st.session_state.review_exercise_filter)
 
 # Create comprehensive maps
 submission_id_map = {}  # label -> id
@@ -96,79 +107,95 @@ if not submission_labels:
     st.sidebar.warning("Keine Abgaben verfügbar mit diesem Filter.")
     st.stop()
 
-# Load last submission from DB
-saved_submission_id = load_grader_state("review_current_submission_id")
-current_selection = st.session_state.review_submission_selector
+# ==================== NAVIGATION BUTTONS (BEFORE SELECTBOX) ====================
+# Process navigation FIRST, then resolve which submission to show
 
-if not current_selection or current_selection not in submission_labels:
-    if saved_submission_id:
-        try:
-            saved_id = int(saved_submission_id)
-            for row in filtered_submissions:
-                if row[0] == saved_id:
-                    matching_label = next(
-                        (label for label, id in submission_id_map.items() if id == saved_id),
-                        None
-                    )
-                    if matching_label and matching_label in submission_labels:
-                        st.session_state.review_submission_selector = matching_label
-                        break
-        except (ValueError, StopIteration):
-            pass
-    
-    # Wenn immer noch keine Auswahl, verwende erste
-    if not st.session_state.get("review_submission_selector") or st.session_state.review_submission_selector not in submission_labels:
-        st.session_state.review_submission_selector = submission_labels[0]
+def _get_current_submission_index():
+    """Find the current submission index in the filtered list."""
+    current_id = st.session_state.review_submission_id
+    if current_id is None or current_id not in id_to_label_map:
+        # Try to load from DB
+        saved_id = get_review_current_submission_id()
+        if saved_id and saved_id in id_to_label_map:
+            return submission_ids_ordered.index(saved_id)
+        return 0
+    return submission_ids_ordered.index(current_id)
 
-# Submission selector
-current_label = st.session_state.review_submission_selector if st.session_state.review_submission_selector in submission_labels else submission_labels[0]
-current_index = submission_labels.index(current_label)
 
+# Display navigation buttons
+st.sidebar.write("---")
+col_prev, col_next = st.sidebar.columns([1, 1])
+
+current_index = _get_current_submission_index()
+
+with col_prev:
+    if st.button("Letzte", key="review_prev_btn", use_container_width=True, disabled=(current_index <= 0)):
+        if current_index > 0:
+            st.session_state.review_nav_action = "prev"
+
+
+
+with col_next:
+    if st.button("Nächste", key="review_next_btn", use_container_width=True, disabled=(current_index >= len(submission_ids_ordered) - 1)):
+        if current_index < len(submission_ids_ordered) - 1:
+            st.session_state.review_nav_action = "next"
+
+with st.sidebar:
+    st.metric("Position", f"{current_index + 1}/{len(submission_ids_ordered)}")
+
+# Handle navigation action
+if st.session_state.review_nav_action:
+    if st.session_state.review_nav_action == "prev" and current_index > 0:
+        new_id = submission_ids_ordered[current_index - 1]
+        st.session_state.review_submission_id = new_id
+        set_review_current_submission_id(new_id)
+    elif st.session_state.review_nav_action == "next" and current_index < len(submission_ids_ordered) - 1:
+        new_id = submission_ids_ordered[current_index + 1]
+        st.session_state.review_submission_id = new_id
+        set_review_current_submission_id(new_id)
+    st.session_state.review_nav_action = None
+    st.rerun()
+
+# ==================== SUBMISSION SELECTOR ====================
+# Resolve which submission to display
+current_id = st.session_state.review_submission_id
+if current_id is None or current_id not in id_to_label_map:
+    # Try to load from DB
+    saved_id = get_review_current_submission_id()
+    if saved_id and saved_id in id_to_label_map:
+        current_id = saved_id
+    else:
+        current_id = submission_ids_ordered[0]
+
+current_label = id_to_label_map[current_id]
+current_index = submission_ids_ordered.index(current_id)
+
+# Display the selectbox
+st.sidebar.write("---")
 selected_label = st.sidebar.selectbox(
     "Wähle eine Abgabe",
     options=submission_labels,
-    index=current_index,
-    key=f"review_submission_select_{st.session_state.current_root}_{st.session_state.review_exercise_filter}"
+    index=submission_labels.index(current_label) if current_label in submission_labels else 0,
+    key=selectbox_key
 )
 
-# Update session state if selection changed and save to DB
-if selected_label != st.session_state.review_submission_selector:
-    st.session_state.review_submission_selector = selected_label
+# Update if selection changed
+if selected_label != current_label:
     submission_id = submission_id_map[selected_label]
-    save_grader_state("review_current_submission_id", str(submission_id))
+    st.session_state.review_submission_id = submission_id
+    set_review_current_submission_id(submission_id)
     st.rerun()
 
-# Get current submission
+# WICHTIG: Setze review_submission_id NACH der Selectbox, nicht davor!
+st.session_state.review_submission_id = current_id
+
+# Get current submission details
 submission_id = submission_id_map[selected_label]
 submission_row = next(row for row in filtered_submissions if row[0] == submission_id)
 submission_path = submission_row[1]
 group_name = submission_row[2]
 submitter = submission_row[3]
 exercise_code = submission_row[4]
-
-
-# Find current index by submission_id
-current_submission_id = submission_id_map[selected_label]
-current_index = submission_ids_ordered.index(current_submission_id)
-
-if st.sidebar.button("Letzte", key="review_prev_btn", use_container_width=True, icon=":material/arrow_back:"):
-    prev_index = (current_index - 1) % len(submission_ids_ordered)
-    prev_submission_id = submission_ids_ordered[prev_index]
-    prev_label = id_to_label_map[prev_submission_id]
-    st.session_state.review_submission_selector = prev_label
-    save_grader_state("review_current_submission_id", str(prev_submission_id))
-    st.rerun()
-
-_ , middle, _ = st.sidebar.columns(3)
-middle.metric("Position", f"{current_index + 1}/{len(submission_ids_ordered)}")
-
-if st.sidebar.button("Nächste", key="review_next_btn", use_container_width=True, icon=":material/arrow_forward:"):
-    next_index = (current_index + 1) % len(submission_ids_ordered)
-    next_submission_id = submission_ids_ordered[next_index]
-    next_label = id_to_label_map[next_submission_id]
-    st.session_state.review_submission_selector = next_label
-    save_grader_state("review_current_submission_id", str(next_submission_id))
-    st.rerun()
 
 # Main content
 st.title("Korrekturen überprüfen")

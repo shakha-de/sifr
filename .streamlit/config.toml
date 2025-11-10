@@ -1,0 +1,6 @@
+[browser]
+serverAddress = "localhost"
+
+gatherUsageStats = false
+
+

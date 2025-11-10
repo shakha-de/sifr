@@ -21,6 +21,10 @@ try:
         scan_and_insert_submissions,
         save_grader_state,
         load_grader_state,
+        navigate_submissions,
+        get_submission_index,
+        navigate_to_next,
+        navigate_to_prev,
     )
     from app.utils import find_pdfs_in_submission, generate_feedback_pdf, update_marks_csv
 except ImportError:  # Fallback when running as a script inside the package folder
@@ -38,6 +42,10 @@ except ImportError:  # Fallback when running as a script inside the package fold
         scan_and_insert_submissions,
         save_grader_state,
         load_grader_state,
+        navigate_submissions,
+        get_submission_index,
+        navigate_to_next,
+        navigate_to_prev,
     )
     from utils import find_pdfs_in_submission, generate_feedback_pdf, update_marks_csv
 
@@ -104,6 +112,8 @@ if "submission_selector" not in st.session_state:
     st.session_state.submission_selector = None
 if "exercise_filter" not in st.session_state:
     st.session_state.exercise_filter = "Alle"
+if "nav_action" not in st.session_state:
+    st.session_state.nav_action = None
 
 # Initialize variables
 submission_id = None
@@ -208,18 +218,18 @@ selected_exercise = st.sidebar.selectbox(
 # Speichere den Filter wenn er sich ändert
 if selected_exercise != load_grader_state("exercise_filter", "Alle"):
     save_grader_state("exercise_filter", selected_exercise)
+    st.session_state.exercise_filter = selected_exercise
 
+# Build filtered submissions list ONCE (wird mehrfach genutzt)
 filtered_submissions = [
     row for row in submissions if selected_exercise == "Alle" or row[4] == selected_exercise
 ]
 
-# Build submission labels
-def build_submission_label(row):
-    status_flag = "[X]" if row[5] == "graded" else "[ ]"
-    return f"{status_flag} {row[3]} ({row[4]})"
-
-submission_labels = [build_submission_label(row) for row in filtered_submissions]
-submission_id_map = {label: row[0] for label, row in zip(submission_labels, filtered_submissions)}
+# Use new navigation helper
+submission_ids_ordered, id_to_label_map, label_to_id_map = navigate_submissions(
+    submissions, 
+    exercise_filter=selected_exercise
+)
 
 # Prepare defaults so downstream widgets always have defined values
 submission_row = None
@@ -231,62 +241,100 @@ points_key = ""
 markdown_key = ""
 
 # Handle no submissions
-if not submission_labels:
+if not submission_ids_ordered:
     st.sidebar.warning("Keine Abgaben verfügbar. Bitte ein Archive hochladen oder den Filter anpassen.")
 else:
-    # Lade die letzte Auswahl aus der Datenbank
-    saved_submission_id = load_grader_state("current_submission_id")
-    current_selection = st.session_state.get("submission_selector")
+    # ==================== NAVIGATION BUTTONS ====================
+    st.sidebar.write("---")
     
-    # Wenn keine Auswahl im session state, versuche aus Datenbank zu laden
-    if not current_selection or current_selection not in submission_labels:
-        if saved_submission_id:
+    # Resolve current submission ID - USE LAST SAVED STATE!
+    # This is THE source of truth for what we're currently viewing
+    if not st.session_state.submission_selector or st.session_state.submission_selector not in id_to_label_map:
+        # Try to load from DB
+        saved_id = load_grader_state("current_submission_id")
+        if saved_id:
             try:
-                saved_id = int(saved_submission_id)
-                # Finde das entsprechende Label
-                for row in filtered_submissions:
-                    if row[0] == saved_id:
-                        matching_label = next(
-                            (label for label, id in submission_id_map.items() if id == saved_id),
-                            None
-                        )
-                        if matching_label and matching_label in submission_labels:
-                            st.session_state.submission_selector = matching_label
-                            break
-            except (ValueError, StopIteration):
-                pass
-        
-        # Wenn immer noch keine Auswahl, verwende erste
-        if not st.session_state.get("submission_selector") or st.session_state.submission_selector not in submission_labels:
-            st.session_state.submission_selector = submission_labels[0]
-
-    # Submission selector - use current value directly
-    current_label = st.session_state.submission_selector if st.session_state.submission_selector in submission_labels else submission_labels[0]
-    current_index = submission_labels.index(current_label)
+                candidate_id = int(saved_id)
+                if candidate_id in id_to_label_map:
+                    st.session_state.submission_selector = candidate_id
+                else:
+                    st.session_state.submission_selector = submission_ids_ordered[0]
+            except (ValueError, TypeError):
+                st.session_state.submission_selector = submission_ids_ordered[0]
+        else:
+            st.session_state.submission_selector = submission_ids_ordered[0]
+    
+    current_id = st.session_state.submission_selector
+    current_index = get_submission_index(current_id, submission_ids_ordered)
+    current_label = id_to_label_map.get(current_id, "")
+    
+    # Navigation buttons - DIRECTLY update submission_selector
+    col_prev, col_next = st.sidebar.columns([1, 1])
+    
+    with col_prev:
+        if st.button("Letzte", key="nav_prev", use_container_width=True, disabled=(current_index <= 0)):
+            prev_id = navigate_to_prev(current_index, submission_ids_ordered)
+            if prev_id:
+                st.session_state.submission_selector = prev_id
+                save_grader_state("current_submission_id", str(prev_id))
+    
+    with col_next:
+        if st.button("Nächste",type="primary",  key="nav_next", use_container_width=True, disabled=(current_index >= len(submission_ids_ordered) - 1)):
+            next_id = navigate_to_next(current_index, submission_ids_ordered)
+            if next_id:
+                st.session_state.submission_selector = next_id
+                save_grader_state("current_submission_id", str(next_id))
+    
+    # ==================== SUBMISSION SELECTOR ====================
+    st.sidebar.write("---")
+    
+    # Build list of labels and find current position
+    submission_labels = list(id_to_label_map.values())
+    
+    # Get CURRENT selection state (might have been updated by buttons above!)
+    current_id = st.session_state.submission_selector
+    current_label = id_to_label_map.get(current_id, submission_labels[0] if submission_labels else "")
+    current_index_in_labels = submission_labels.index(current_label) if current_label in submission_labels else 0
+    
+    # Use on_change callback to handle selection
+    def on_selectbox_change():
+        selected_label = st.session_state[f"submission_select_{st.session_state.current_root}_{st.session_state.exercise_filter}"]
+        if selected_label in label_to_id_map:
+            new_id = label_to_id_map[selected_label]
+            st.session_state.submission_selector = new_id
+            save_grader_state("current_submission_id", str(new_id))
     
     selected_label = st.sidebar.selectbox(
         "Wähle eine Abgabe",
         options=submission_labels,
-        index=current_index,
-        key=f"submission_select_{st.session_state.current_root}_{st.session_state.exercise_filter}"
+        index=current_index_in_labels,
+        key=f"submission_select_{st.session_state.current_root}_{st.session_state.exercise_filter}",
+        on_change=on_selectbox_change
     )
-
-    # Update session state if selection changed and save to DB
-    if selected_label != st.session_state.submission_selector:
-        st.session_state.submission_selector = selected_label
-        submission_id = submission_id_map[selected_label]
-        save_grader_state("current_submission_id", str(submission_id))
-        st.rerun()
-
-    # Get current submission
-    submission_id = submission_id_map[selected_label]
-    submission_row = next(row for row in filtered_submissions if row[0] == submission_id)
-    submission_path = submission_row[1]
-    group_name = submission_row[2]
-    name = submission_row[3]
-    current_exercise_name = submission_row[4]
-    points_key = f"points_input_{submission_id}"
-    markdown_key = f"markdown_area_new_{submission_id}"
+    
+    # Get current submission data using the LATEST current_id
+    current_id = st.session_state.submission_selector
+    
+    # WICHTIG: submission_row neu berechnen basierend auf aktueller current_id!
+    submission_row = next((row for row in filtered_submissions if row[0] == current_id), None)
+    
+    # Initialize variables (WICHTIG: Außerhalb des if-Blocks!)
+    submission_id = current_id  # ✅ Immer definieren!
+    submission_path = ""
+    group_name = ""
+    name = ""
+    current_exercise_name = ""
+    points_key = ""
+    markdown_key = ""
+    
+    if submission_row:
+        submission_path = submission_row[1]
+        group_name = submission_row[2]
+        name = submission_row[3]
+        current_exercise_name = submission_row[4]
+        submission_id = submission_row[0]
+        points_key = f"points_input_{submission_id}"
+        markdown_key = f"markdown_area_new_{submission_id}"
 
     # Initialize feedback state for this submission
     if "active_submission_id" not in st.session_state or st.session_state.active_submission_id != submission_id:
@@ -469,6 +517,16 @@ Hier eine kurze Zusammenfassung...
             else:
                 st.error("Bitte Fehler auswählen.")
 
+        # Status Dropdown
+        st.subheader("Status & Abschluss")
+        status_options = ['SUBMITTED', 'PROVISIONAL_MARK', 'FINAL_MARK', 'RESUBMITTED', 'ABSEND', 'SICK']
+        selected_status = st.selectbox(
+            "Status wählen",
+            options=status_options,
+            index=2,  # Default: "FINAL_MARK"
+            key=f"status_select_{submission_id}"
+        )
+
         # Meme
         if show_meme:
             st.subheader("Add Meme")
@@ -500,8 +558,42 @@ Hier eine kurze Zusammenfassung...
                     sheet_number,
                     exercise_number
                 ):
-                    save_feedback(submission_id, st.session_state[points_key], st.session_state[markdown_key], output_pdf)
-                    st.success(f"Feedback PDF erstellt: {output_pdf}")
+                    # Hole Status aus Dropdown
+                    status_to_save = st.session_state.get(f"status_select_{submission_id}", "graded")
+                    points_to_save = st.session_state[points_key]
+                    
+                    # Speichere Feedback mit Status in Datenbank
+                    save_feedback(submission_id, points_to_save, st.session_state[markdown_key], output_pdf)
+                    
+                    # Aktualisiere auch den Status in der submissions Tabelle
+                    import sqlite3
+                    from pathlib import Path
+                    db_path = Path(get_data_dir()) / "db/intern/grading.db"
+                    conn = sqlite3.connect(db_path)
+                    cursor = conn.cursor()
+                    cursor.execute('UPDATE submissions SET status = ? WHERE id = ?', (status_to_save, submission_id))
+                    conn.commit()
+                    conn.close()
+                    
+                    # Aktualisiere marks.csv mit Punkte und Status
+                    # Extrahiere submission_identifier aus group_name (letzter Teil nach underscore)
+                    submission_identifier = group_name.split("_")[-1] if "_" in group_name else group_name
+                    
+                    if current_root:
+                        try:
+                            update_marks_csv(
+                                current_root,
+                                submission_identifier,
+                                points_to_save,
+                                status_to_save
+                            )
+                            st.success(f"Feedback PDF erstellt und marks.csv aktualisiert: {output_pdf}")
+                            st.info(f"✓ Punkte: {points_to_save}, Status: {status_to_save}")
+                        except Exception as csv_error:
+                            st.warning(f"PDF erstellt, aber marks.csv konnte nicht aktualisiert werden: {csv_error}")
+                            st.success(f"Feedback PDF erstellt: {output_pdf}")
+                    else:
+                        st.success(f"Feedback PDF erstellt: {output_pdf}")
                 else:
                     st.error("Fehler beim Erstellen der PDF.")
             except Exception as e:
@@ -537,52 +629,5 @@ with st.expander("Fehlercodes verwalten"):
                 delete_error_code(code)
                 st.success(f"{code} gelöscht!")
                 st.rerun()
-
-# Navigation buttons (only if submissions exist)
-if submission_labels:
-    current_label = st.session_state.get("submission_selector")
-    if current_label not in submission_labels:
-        current_label = submission_labels[0]
-        st.session_state.submission_selector = current_label
-    col1, col2, col3 = st.sidebar.columns(3)
-    current_index = submission_labels.index(current_label)
-
-    with col1:
-        if st.button("Letzte Abgabe", key="prev_submission_btn"):
-            prev_index = (current_index - 1) % len(submission_labels)
-            prev_label = submission_labels[prev_index]
-            st.session_state.submission_selector = prev_label
-            submission_id = submission_id_map[prev_label]
-            save_grader_state("current_submission_id", str(submission_id))
-            st.rerun()
-
-    with col2:
-        if st.button("Nächste Abgabe", key="next_submission_btn"):
-            next_index = (current_index + 1) % len(submission_labels)
-            next_label = submission_labels[next_index]
-            st.session_state.submission_selector = next_label
-            submission_id = submission_id_map[next_label]
-            save_grader_state("current_submission_id", str(submission_id))
-            st.rerun()
-
-    with col3:
-        if st.button("Korrigiert", key="mark_corrected_btn"):
-            points_value = st.session_state.get(points_key, 0.0)
-            markdown_value = st.session_state.get(markdown_key, "")
-            submission_identifier = group_name.split("_")[-1] if "_" in group_name else group_name
-
-            if not current_root:
-                st.error("Kein Arbeitsordner ausgewählt.")
-            else:
-                try:
-                    update_marks_csv(current_root, submission_identifier, points_value, "FINAL_MARK")
-                except (FileNotFoundError, ValueError) as error:
-                    st.error(str(error))
-                else:
-                    save_feedback(submission_id, points_value, markdown_value, None)
-                    st.session_state.current_markdown = markdown_value
-                    st.session_state.current_points = points_value
-                    st.success("Korrektur gespeichert und marks.csv aktualisiert.")
-                    st.rerun()
 
 st.sidebar.markdown("")
