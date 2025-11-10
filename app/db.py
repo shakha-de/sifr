@@ -427,8 +427,9 @@ def navigate_submissions(submissions_list: list, exercise_filter: str | None = N
     
     for row in filtered:
         submission_id = row[0]
-        # row[3] is submitter name, row[4] is exercise_code
-        status_flag = "[X]" if row[5] == "graded" else "[ ]"
+        # row[3] is submitter name, row[4] is exercise_code, row[5] is status
+        # Status "FINAL_MARK" oder "PROVISIONAL_MARK" bedeutet korrigiert
+        status_flag = "✅" if row[5] in ['FINAL_MARK', 'PROVISIONAL_MARK'] else "⭕"
         label = f"{status_flag} {row[3]} ({row[4]})"
         
         id_to_label_map[submission_id] = label

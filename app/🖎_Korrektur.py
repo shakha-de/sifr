@@ -193,7 +193,8 @@ submissions = get_submissions()
 if not submissions and st.session_state.get("archive_loaded"):
     st.warning("Keine Submissions gefunden. Bitte Archive überprüfen.")
 total_submissions = len(submissions)
-corrected = sum(1 for row in submissions if row[5] == "graded")
+# Status "FINAL_MARK" oder "PROVISIONAL_MARK" bedeutet korrigiert
+corrected = sum(1 for row in submissions if row[5] in ['FINAL_MARK', 'PROVISIONAL_MARK'])
 st.sidebar.write(f"Korrekturstand: {corrected}/{total_submissions}")
 
 # Filter by exercise
@@ -296,17 +297,18 @@ else:
     current_label = id_to_label_map.get(current_id, submission_labels[0] if submission_labels else "")
     current_index_in_labels = submission_labels.index(current_label) if current_label in submission_labels else 0
     
+    # Force re-render of selectbox with dynamic key based on current_id
+    # This ensures the index is recalculated each render
+    selectbox_key = f"submission_select_{st.session_state.current_root}_{st.session_state.exercise_filter}_{current_id}"
+    
     # Use on_change callback to handle selection
     def on_selectbox_change():
-        selected_label = st.session_state[f"submission_select_{st.session_state.current_root}_{st.session_state.exercise_filter}"]
+        # The selectbox value is always available via the dynamic key
+        selected_label = st.session_state[selectbox_key]
         if selected_label in label_to_id_map:
             new_id = label_to_id_map[selected_label]
             st.session_state.submission_selector = new_id
             save_grader_state("current_submission_id", str(new_id))
-    
-    # Force re-render of selectbox with dynamic key based on current_id
-    # This ensures the index is recalculated each render
-    selectbox_key = f"submission_select_{st.session_state.current_root}_{st.session_state.exercise_filter}_{current_id}"
     
     selected_label = st.sidebar.selectbox(
         "Wähle eine Abgabe",
@@ -529,10 +531,18 @@ Hier eine kurze Zusammenfassung...
         # Status Dropdown
         st.subheader("Status & Abschluss")
         status_options = ['SUBMITTED', 'PROVISIONAL_MARK', 'FINAL_MARK', 'RESUBMITTED', 'ABSEND', 'SICK']
+        
+        # Lade aktuellen Status aus Datenbank
+        current_status = submission_row[4] if submission_row and len(submission_row) > 4 else 'FINAL_MARK'
+        try:
+            status_index = status_options.index(current_status)
+        except (ValueError, IndexError):
+            status_index = 2  # Default: "FINAL_MARK"
+        
         selected_status = st.selectbox(
             "Status wählen",
             options=status_options,
-            index=2,  # Default: "FINAL_MARK"
+            index=status_index,
             key=f"status_select_{submission_id}"
         )
 

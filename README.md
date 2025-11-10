@@ -47,7 +47,7 @@ This keeps host dependencies clean and makes it easy to ship a ready-to-run imag
 	```
 3. Serve the app with Streamlit:
 	```bash
-	streamlit run app/main_app.py
+	streamlit run app/🖎_Korrektur.py
 	```
 
 ## Configuration
