@@ -328,8 +328,8 @@ else:
     group_name = ""
     name = ""
     current_exercise_name = ""
-    points_key = ""
-    markdown_key = ""
+    points_key = f"points_input_{current_id}"  # ✅ IMMER einen gültigen Key setzen!
+    markdown_key = f"markdown_area_new_{current_id}"  # ✅ IMMER einen gültigen Key setzen!
     
     if submission_row:
         submission_path = submission_row[1]
@@ -424,32 +424,37 @@ else:
 
     with right_col:
         st.header("Feedback")
-        if max_points_for_exercise:
-            st.caption(f"Maximale Punkte für {current_exercise_name}: {max_points_for_exercise}")
+        
+        # Nur anzeigen wenn submission_row existiert!
+        if not submission_row:
+            st.error("❌ Abgabe nicht gefunden. Bitte laden Sie ein Archive oder wählen Sie einen anderen Filter.")
+        else:
+            if max_points_for_exercise:
+                st.caption(f"Maximale Punkte für {current_exercise_name}: {max_points_for_exercise}")
 
-        # Lade Feedback-Daten für diese Abgabe (einmalig)
-        feedback = get_feedback(submission_id)
-        initial_points = float(feedback[0]) if feedback else float(max_points_for_exercise or 0.0)
-        initial_points = max(0.0, initial_points)
-        initial_markdown = (feedback[1] or "") if feedback else ""
+            # Lade Feedback-Daten für diese Abgabe
+            feedback = get_feedback(submission_id)
+            initial_points = float(feedback[0]) if feedback else float(max_points_for_exercise or 0.0)
+            initial_points = max(0.0, initial_points)
+            initial_markdown = (feedback[1] or "") if feedback else ""
 
-        # Dynamische Keys pro Abgabe
-        # Stelle sicher, dass die initialen Werte beim ersten Besuch gesetzt werden
-        if points_key not in st.session_state:
-            st.session_state[points_key] = initial_points
-        if markdown_key not in st.session_state:
-            st.session_state[markdown_key] = initial_markdown
+            # Dynamische Keys pro Abgabe
+            # WICHTIG: NUR beim ERSTEN Besuch initialisieren (wenn Key noch nicht existiert)!
+            if points_key not in st.session_state:
+                st.session_state[points_key] = initial_points
+            if markdown_key not in st.session_state:
+                st.session_state[markdown_key] = initial_markdown
 
-        # Apply pending updates to session state before creating widgets
-        if f"pending_points_{submission_id}" in st.session_state:
-            st.session_state[points_key] = st.session_state[f"pending_points_{submission_id}"]
-            del st.session_state[f"pending_points_{submission_id}"]
-        if f"pending_markdown_{submission_id}" in st.session_state:
-            st.session_state[markdown_key] = st.session_state[f"pending_markdown_{submission_id}"]
-            del st.session_state[f"pending_markdown_{submission_id}"]
+            # Apply pending updates to session state before creating widgets
+            if f"pending_points_{submission_id}" in st.session_state:
+                st.session_state[points_key] = st.session_state[f"pending_points_{submission_id}"]
+                del st.session_state[f"pending_points_{submission_id}"]
+            if f"pending_markdown_{submission_id}" in st.session_state:
+                st.session_state[markdown_key] = st.session_state[f"pending_markdown_{submission_id}"]
+                del st.session_state[f"pending_markdown_{submission_id}"]
 
-        # Widgets mit dynamischen Keys
-        points = st.number_input(
+            # Widgets mit dynamischen Keys
+            points = st.number_input(
             "Punkte",
             min_value=0.0,
             step=0.5,
@@ -602,11 +607,6 @@ Hier eine kurze Zusammenfassung...
                     st.error("Fehler beim Erstellen der PDF.")
             except Exception as e:
                 st.exception(e)
-
-        # Speichern-Button (optional, falls nicht nur über PDF)
-        if st.button("Korrektur speichern", key=f"save_feedback_{submission_id}"):
-            save_feedback(submission_id, st.session_state[points_key], st.session_state[markdown_key], None)
-            st.success("Korrektur gespeichert.")
 
 # Fehlercodes verwalten
 with st.expander("Fehlercodes verwalten"):
