@@ -304,11 +304,15 @@ else:
             st.session_state.submission_selector = new_id
             save_grader_state("current_submission_id", str(new_id))
     
+    # Force re-render of selectbox with dynamic key based on current_id
+    # This ensures the index is recalculated each render
+    selectbox_key = f"submission_select_{st.session_state.current_root}_{st.session_state.exercise_filter}_{current_id}"
+    
     selected_label = st.sidebar.selectbox(
         "Wähle eine Abgabe",
         options=submission_labels,
         index=current_index_in_labels,
-        key=f"submission_select_{st.session_state.current_root}_{st.session_state.exercise_filter}",
+        key=selectbox_key,
         on_change=on_selectbox_change
     )
     
