@@ -256,25 +256,61 @@ def get_feedback(submission_id):
     conn.close()
     return row
 
-def save_feedback(submission_id, points, markdown_content, pdf_path):
+def save_feedback_with_submission(
+    submission_id: int,
+    status: str,
+    points: float,
+    markdown_content: str,
+    pdf_path: str | None,
+):
+    """Persist feedback data and synchronize submission status in one transaction."""
+
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
-    
-    # Get sheet_id and exercise_id from submission
+
     cursor.execute('SELECT sheet_id, exercise_id FROM submissions WHERE id = ?', (submission_id,))
     submission_data = cursor.fetchone()
     if not submission_data:
         conn.close()
         raise ValueError(f"Submission with id {submission_id} not found")
-    
+
     sheet_id, exercise_id = submission_data
-    
-    # Insert or update feedback with all required fields
-    cursor.execute('''
-        INSERT OR REPLACE INTO feedback (submission_id, sheet_id, exercise_id, points, markdown_content, pdf_path)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (submission_id, sheet_id, exercise_id, points, markdown_content, pdf_path))
-    
+
+    cursor.execute('SELECT id FROM feedback WHERE submission_id = ?', (submission_id,))
+    feedback_exists = cursor.fetchone() is not None
+
+    if feedback_exists:
+        cursor.execute(
+            '''
+            UPDATE feedback
+            SET sheet_id = ?,
+                exercise_id = ?,
+                points = ?,
+                markdown_content = ?,
+                pdf_path = ?,
+                updated_at = datetime('now')
+            WHERE submission_id = ?
+            ''',
+            (sheet_id, exercise_id, points, markdown_content, pdf_path, submission_id),
+        )
+    else:
+        cursor.execute(
+            '''
+            INSERT INTO feedback (submission_id, sheet_id, exercise_id, points, markdown_content, pdf_path)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''',
+            (submission_id, sheet_id, exercise_id, points, markdown_content, pdf_path),
+        )
+
+    cursor.execute(
+        '''
+        UPDATE submissions
+        SET status = ?
+        WHERE id = ?
+        ''',
+        (status, submission_id),
+    )
+
     conn.commit()
     conn.close()
 

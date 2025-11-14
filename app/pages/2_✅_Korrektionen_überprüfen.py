@@ -1,9 +1,11 @@
 from pathlib import Path
+from re import split
 
 import streamlit as st
 from streamlit_pdf_viewer import pdf_viewer
 
 from utils import find_pdfs_in_submission
+import os
 from db import (
     get_submissions,
     get_feedback,
@@ -84,7 +86,7 @@ filtered_submissions = [
 
 # Build submission labels and map
 def build_submission_label(row):
-    status_flag = "[✓]" if row[5] == "graded" else "[ ]"
+    status_flag = "✅" if row[5] in ("FINAL_MARK", "PROVISIONAL_MARK") else "⭕"
     return f"{status_flag} {row[3]} ({row[4]})"
 
 submission_labels = [build_submission_label(row) for row in filtered_submissions]
@@ -123,7 +125,6 @@ def _get_current_submission_index():
 
 
 # Display navigation buttons
-st.sidebar.write("---")
 col_prev, col_next = st.sidebar.columns([1, 1])
 
 current_index = _get_current_submission_index()
@@ -171,7 +172,6 @@ current_label = id_to_label_map[current_id]
 current_index = submission_ids_ordered.index(current_id)
 
 # Display the selectbox
-st.sidebar.write("---")
 selected_label = st.sidebar.selectbox(
     "Wähle eine Abgabe",
     options=submission_labels,
@@ -196,11 +196,12 @@ submission_path = submission_row[1]
 group_name = submission_row[2]
 submitter = submission_row[3]
 exercise_code = submission_row[4]
+exercise_number = split("-", exercise_code)[1]
 
 # Main content
-st.title("Korrekturen überprüfen")
-st.header(f"Abgabe: {group_name} - {exercise_code}")
-st.subheader(f"Eingereicht von: {submitter}")
+st.sidebar.markdown(f"""Aufgabe # {exercise_number}
+
+  Eingereicht von: **{submitter}**""")
 
 # Load feedback
 feedback = get_feedback(submission_id)
@@ -209,19 +210,25 @@ feedback = get_feedback(submission_id)
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("Originalabgaben")
-    
     # Find original submission files
     submission_path_obj = Path(submission_path)
     if submission_path_obj.exists():
         pdf_files = find_pdfs_in_submission(submission_path)
         if pdf_files:
             for pdf_file in pdf_files:
-                st.write(f"📄 {pdf_file}")
-                try:
-                    pdf_viewer(str(pdf_file))
-                except Exception as e:
-                    st.error(f"Fehler beim Anzeigen der PDF: {e}")
+                if not os.path.basename(pdf_file).startswith(f"feedback_{group_name}"):
+                    try:
+                        pdf_viewer(
+                            str(pdf_file),
+                            resolution_boost=3,
+                            width="100%",
+                            height=800,
+                            render_text=True,
+                        
+                        
+                            )
+                    except Exception as e:
+                        st.error(f"Fehler beim Anzeigen der PDF: {e}")
         else:
             st.info("Keine PDFs in dieser Abgabe gefunden.")
     else:

@@ -99,3 +99,18 @@ def update_marks_csv(root_dir: str | Path, submission_id: str, points: float, st
     with marks_path.open("w", encoding="utf-8", newline="") as outfile:
         writer = csv.writer(outfile)
         writer.writerows(rows)
+
+def get_markdown_placeholder_text() -> str:
+    str = """## Gesamtbewertung
+Hier eine kurze Zusammenfassung...
+
+## Detaillierte Kommentare
+- **Stärken:** ...
+- **Verbesserungsmöglichkeiten:** ...
+
+## Spezifische Hinweise
+- Punkt 1
+- Punkt 2
+
+*Verwende **fett** für wichtige Teile und *kursiv* für Betonungen.*"""
+    return str
