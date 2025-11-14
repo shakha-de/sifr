@@ -44,4 +44,4 @@ if left.button("Save Changes", type="primary", icon=":material/save:"):
         st.error(f"Error saving CSV: {e}")
 
 if right.button("Zurück zu Korrekturen", icon=":material/arrow_back:" ):
-    st.switch_page("main_app.py")
+    st.switch_page("🖎_Korrektur.py")

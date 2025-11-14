@@ -19,7 +19,7 @@ try:
         get_submissions,
         init_db,
         save_exercise_max_points,
-    save_feedback_with_submission,
+        save_feedback_with_submission,
         scan_and_insert_submissions,
         save_grader_state,
         load_grader_state,
@@ -47,7 +47,7 @@ except ImportError:  # Fallback when running as a script inside the package fold
         get_submissions,
         init_db,
         save_exercise_max_points,
-    save_feedback_with_submission,
+        save_feedback_with_submission,
         scan_and_insert_submissions,
         save_grader_state,
         load_grader_state,
@@ -542,9 +542,12 @@ with right_col:
         "ABSEND",
         "SICK",
     ]
-    current_status = submission_record.status or "FINAL_MARK"
+    if status_key not in st.session_state:
+        st.session_state[status_key] = "FINAL_MARK"
+    current_status = st.session_state[status_key]
     if current_status not in status_options:
         current_status = "FINAL_MARK"
+        st.session_state[status_key] = current_status
     status_index = status_options.index(current_status)
     st.selectbox(
         "Status wählen",
