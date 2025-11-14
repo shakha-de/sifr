@@ -9,9 +9,8 @@ from streamlit_pdf_viewer import pdf_viewer
 try:
     from app.config import get_data_dir
     from app.db import (
-        add_error_code,
-        delete_error_code,
         get_error_codes,
+        get_sheet_id_by_name,
         get_exercise_max_points,
         get_feedback,
         get_submissions,
@@ -30,9 +29,8 @@ try:
 except ImportError:  # Fallback when running as a script inside the package folder
     from config import get_data_dir
     from db import (
-        add_error_code,
-        delete_error_code,
         get_error_codes,
+        get_sheet_id_by_name,
         get_exercise_max_points,
         get_feedback,
         get_submissions,
@@ -188,6 +186,13 @@ if current_root and (
     st.session_state.last_scanned_root = current_root
     st.session_state.force_rescan = False
 
+current_sheet_id = None
+current_sheet_name = None
+if current_root:
+    current_sheet_name = os.path.basename(str(current_root).rstrip(os.sep)) or None
+    if current_sheet_name:
+        current_sheet_id = get_sheet_id_by_name(current_sheet_name)
+
 # Load submissions
 submissions = get_submissions()
 if not submissions and st.session_state.get("archive_loaded"):
@@ -286,9 +291,7 @@ else:
                 st.session_state.submission_selector = next_id
                 save_grader_state("current_submission_id", str(next_id))
     
-    # ==================== SUBMISSION SELECTOR ====================
-    st.sidebar.write("---")
-    
+    # ==================== SUBMISSION SELECTOR ====================    
     # Build list of labels and find current position
     submission_labels = list(id_to_label_map.values())
     
@@ -384,43 +387,26 @@ else:
 
         show_meme = st.checkbox("Add Meme Menü anzeigen", value=True)
 
-        render_mode_labels = {
-            "Modern (Standard)": "unwrap",
-            "Legacy IFrame": "legacy_iframe",
-            "Legacy Embed": "legacy_embed",
-        }
-        default_label = st.session_state.get("pdf_render_mode_label", "Modern (Standard)")
-        selected_label = st.selectbox(
-            "PDF-Anzeige-Modus",
-            options=list(render_mode_labels.keys()),
-            index=list(render_mode_labels.keys()).index(default_label)
-            if default_label in render_mode_labels
-            else 0,
-            help="Bei Darstellungsproblemen kann einer der Legacy-Modi helfen.",
-        )
-        st.session_state.pdf_render_mode_label = selected_label
-        st.session_state.pdf_render_mode = render_mode_labels[selected_label]
-
     max_points_for_exercise = st.session_state.exercise_max_points.get(current_exercise_name)
 
     # Main area
-    left_col, right_col = st.columns([7, 3], gap="large")
+    left_col, right_col = st.columns([7, 3], gap="small")
 
     with left_col:
-        st.header(f"Abgabe von: {name}")
-        st.caption(f"Ordner: {group_name}")
+        st.markdown(f"### Abgabe von: {name}")
         pdfs = find_pdfs_in_submission(submission_path)
         if pdfs:
             for pdf in pdfs:
-                st.markdown(f"**{os.path.basename(pdf)}**")
-                pdf_viewer(
-                    pdf,
-                    zoom_level=1.60,
-                    width="100%",
-                    height=1200,
-                    rendering=st.session_state.get("pdf_render_mode", "unwrap"),
-                    key=f"pdf_viewer_{submission_id}_{os.path.basename(pdf)}",  # ✅ Eindeutiger Key
-                )
+                if not os.path.basename(pdf).startswith("feedback_"):
+                    pdf_viewer(
+                        pdf,
+                        zoom_level=1.50,
+                        width="100%",
+                        height=800,
+                        render_text=True,
+                        show_page_separator=False,
+                        key=f"pdf_viewer_{submission_id}_{os.path.basename(pdf)}",  # ✅ Eindeutiger Key
+                    )
         else:
             st.info("Keine PDFs gefunden.")
 
@@ -496,14 +482,18 @@ Hier eine kurze Zusammenfassung...
 
         # Fehlercodes
         st.subheader("Fehlercodes")
-        error_codes = get_error_codes()
-        selected_errors = st.multiselect(
+        left_col_error, right_col_error = st.columns((7,3), vertical_alignment="bottom")
+        error_codes = get_error_codes(current_sheet_id) if current_sheet_id else []
+        options = [f"{code}: {desc} ({abzug} Punkte)" for code, desc, abzug, komm in error_codes]
+        if not options:
+            st.info("Für diese Übungsserie sind noch keine Fehlercodes hinterlegt.")
+        selected_errors = left_col_error.multiselect(
             "Häufige Fehler",
-            [f"{code}: {desc} ({abzug} Punkte)" for code, desc, abzug, komm in error_codes],
+            options,
             key=f"error_codes_select_{submission_id}",  # auch hier dynamisch!
         )
 
-        if st.button("Fehler anwenden", key=f"apply_errors_{submission_id}"):
+        if right_col_error.button("Fehler anwenden", key=f"apply_errors_{submission_id}"):
             if selected_errors:
                 # Hole aktuellen Punktestand aus dem Widget-State
                 current_points = st.session_state[points_key]
@@ -513,11 +503,12 @@ Hier eine kurze Zusammenfassung...
                     code = selected.split(":")[0].strip()
                     for ec in error_codes:
                         if ec[0] == code:
+                            desc=ec[1]
                             deduction = float(ec[2] or 0.0)
                             current_points = max(0.0, current_points - deduction)
                             comment = ec[3] or ""
                             if comment:
-                                current_markdown += f"\n\n*{code}: -{deduction}P*\n{comment}"
+                                current_markdown += f"\n\n*{desc}: -{deduction}P*\n{comment}"
                             break
 
                 # Aktualisiere den Session State der Widgets
@@ -529,7 +520,6 @@ Hier eine kurze Zusammenfassung...
                 st.error("Bitte Fehler auswählen.")
 
         # Status Dropdown
-        st.subheader("Status & Abschluss")
         status_options = ['SUBMITTED', 'PROVISIONAL_MARK', 'FINAL_MARK', 'RESUBMITTED', 'ABSEND', 'SICK']
         
         # Lade aktuellen Status aus Datenbank
@@ -548,9 +538,10 @@ Hier eine kurze Zusammenfassung...
 
         # Meme
         if show_meme:
-            st.subheader("Add Meme")
-            meme_link = st.text_input("Bild-Link eingeben", key=f"meme_link_{submission_id}")
-            if st.button("Add Meme", key=f"add_meme_btn_{submission_id}"):
+            st.subheader("Memes")
+            left_col_meme, right_col_meme = st.columns((7,3), vertical_alignment="bottom")
+            meme_link = left_col_meme.text_input("Bild-Link eingeben", key=f"meme_link_{submission_id}")
+            if right_col_meme.button("Add Meme", key=f"add_meme_btn_{submission_id}"):
                 if meme_link:
                     current_md = st.session_state[markdown_key]
                     st.session_state[f"pending_markdown_{submission_id}"] = current_md + f"\n\n$\\hfill$ ![]({meme_link}) $\\hfill$ "
@@ -618,30 +609,3 @@ Hier eine kurze Zusammenfassung...
             except Exception as e:
                 st.exception(e)
 
-# Fehlercodes verwalten
-with st.expander("Fehlercodes verwalten"):
-    st.write("Neuen Fehler hinzufügen:")
-    new_code = st.text_input("Code", key="new_code")
-    new_desc = st.text_input("Beschreibung", key="new_desc")
-    new_abzug = st.number_input("Abzug Punkte", min_value=0.0, step=0.5, key="new_abzug")
-    new_komm = st.text_area("Kommentar", key="new_komm")
-    if st.button("Hinzufügen"):
-        if new_code and new_desc:
-            add_error_code(new_code, new_desc, new_abzug, new_komm)
-            st.success("Fehler hinzugefügt!")
-            st.rerun()
-        else:
-            st.error("Code und Beschreibung erforderlich.")
-
-    st.write("Vorhandene Fehler:")
-    for code, desc, abzug, komm in get_error_codes():
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            st.write(f"{code}: {desc} ({abzug} Punkte) - {komm}")
-        with col2:
-            if st.button(f"Löschen {code}", key=f"del_{code}"):
-                delete_error_code(code)
-                st.success(f"{code} gelöscht!")
-                st.rerun()
-
-st.sidebar.markdown("")

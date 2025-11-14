@@ -278,10 +278,36 @@ def save_feedback(submission_id, points, markdown_content, pdf_path):
     conn.commit()
     conn.close()
 
-def get_error_codes():
+def get_sheets():
+    """Return all stored sheets ordered by name."""
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
-    cursor.execute('SELECT code, description, deduction, comment FROM error_codes')
+    cursor.execute('SELECT id, name FROM sheets ORDER BY name COLLATE NOCASE')
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_sheet_id_by_name(sheet_name: str) -> int | None:
+    """Return the sheet id for the given name, or None if it does not exist."""
+    conn = sqlite3.connect(_resolve_db_path())
+    cursor = conn.cursor()
+    cursor.execute('SELECT id FROM sheets WHERE name = ?', (sheet_name,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def get_error_codes(sheet_id: int | None = None):
+    conn = sqlite3.connect(_resolve_db_path())
+    cursor = conn.cursor()
+    if sheet_id is None:
+        cursor.execute('SELECT code, description, deduction, comment FROM error_codes ORDER BY code COLLATE NOCASE')
+    else:
+        cursor.execute(
+            'SELECT code, description, deduction, comment FROM error_codes WHERE sheet_id = ? ORDER BY code COLLATE NOCASE',
+            (sheet_id,)
+        )
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -303,18 +329,23 @@ def save_exercise_max_points(exercise, max_points):
     conn.commit()
     conn.close()
 
-def add_error_code(code, description, deduction, comment):
+def add_error_code(sheet_id, code, description, deduction, comment):
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO error_codes (code, description, deduction, comment) VALUES (?, ?, ?, ?)',
-                   (code, description, deduction, comment))
+    cursor.execute(
+        'INSERT INTO error_codes (sheet_id, code, description, deduction, comment) VALUES (?, ?, ?, ?, ?)',
+        (sheet_id, code, description, deduction, comment)
+    )
     conn.commit()
     conn.close()
 
-def delete_error_code(code):
+def delete_error_code(code, sheet_id: int | None = None):
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
-    cursor.execute('DELETE FROM error_codes WHERE code = ?', (code,))
+    if sheet_id is None:
+        cursor.execute('DELETE FROM error_codes WHERE code = ?', (code,))
+    else:
+        cursor.execute('DELETE FROM error_codes WHERE code = ? AND sheet_id = ?', (code, sheet_id))
     conn.commit()
     conn.close()
 
