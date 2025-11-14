@@ -135,12 +135,22 @@ def init_db():
         )
     ''')
 
+    # Table for saving a path to the answer sheet of a current sheet
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS answer_sheets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sheet_id INTEGER NOT NULL REFERENCES sheets(id),
+            path_to_file TEXT NOT NULL
+        )
+    ''')
+
     # Indexes 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_submissions_sheet_ex ON submissions(sheet_id, exercise_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_submission ON files(submission_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_submission ON feedback(submission_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_error_codes_sheet ON error_codes(sheet_id)")
-    
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_answer_sheets_sheet_id ON answer_sheets(sheet_id)")
+
     conn.commit()
     conn.close()
 
@@ -256,6 +266,15 @@ def get_feedback(submission_id):
     conn.close()
     return row
 
+
+def get_answer_sheet_path(sheet_id: int) -> str | None:
+    conn = sqlite3.connect(_resolve_db_path())
+    cursor = conn.cursor()
+    cursor.execute('SELECT path_to_file FROM answer_sheets WHERE sheet_id = ?', (sheet_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
 def save_feedback_with_submission(
     submission_id: int,
     status: str,
@@ -311,6 +330,34 @@ def save_feedback_with_submission(
         (status, submission_id),
     )
 
+    conn.commit()
+    conn.close()
+
+
+def save_answer_sheet_path(sheet_id: int, file_path: str) -> None:
+    conn = sqlite3.connect(_resolve_db_path())
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        INSERT INTO answer_sheets (sheet_id, path_to_file)
+        VALUES (?, ?)
+        ON CONFLICT(sheet_id) DO UPDATE SET path_to_file = excluded.path_to_file
+        ''',
+        (sheet_id, file_path),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_answer_sheet_path(sheet_id: int) -> None:
+    """Remove the stored answer sheet entry for the given sheet."""
+
+    conn = sqlite3.connect(_resolve_db_path())
+    cursor = conn.cursor()
+    cursor.execute(
+        'DELETE FROM answer_sheets WHERE sheet_id = ?',
+        (sheet_id,),
+    )
     conn.commit()
     conn.close()
 

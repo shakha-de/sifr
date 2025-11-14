@@ -13,6 +13,8 @@ from db import (
     save_grader_state,
     get_review_current_submission_id,
     set_review_current_submission_id,
+    get_sheet_id_by_name,
+    get_answer_sheet_path,
 )
 
 
@@ -33,6 +35,9 @@ if not current_root:
     st.error("Kein aktiver Ordner wurde gewählt. Bitte wählen sie einen Arbeitsordner zuerst.")
     st.stop()
 
+current_sheet_name = Path(current_root).name
+current_sheet_id = get_sheet_id_by_name(current_sheet_name)
+
 
 def _build_selectbox_key(root_value: str | None, exercise_filter: str | None) -> str:
     """Create a Streamlit widget key using only safe characters."""
@@ -40,7 +45,6 @@ def _build_selectbox_key(root_value: str | None, exercise_filter: str | None) ->
     sanitized = "".join(ch if ch.isalnum() else "_" for ch in base)
     sanitized = sanitized or "default"
     return f"review_submission_select_{sanitized}"
-
 
 # Initialize session state
 if "review_submission_id" not in st.session_state:
@@ -137,7 +141,7 @@ with col_prev:
 
 
 with col_next:
-    if st.button("Nächste", key="review_next_btn", use_container_width=True, disabled=(current_index >= len(submission_ids_ordered) - 1)):
+    if st.button("Nächste",type="primary", key="review_next_btn", use_container_width=True, disabled=(current_index >= len(submission_ids_ordered) - 1)):
         if current_index < len(submission_ids_ordered) - 1:
             st.session_state.review_nav_action = "next"
 
@@ -186,7 +190,6 @@ if selected_label != current_label:
     set_review_current_submission_id(submission_id)
     st.rerun()
 
-# WICHTIG: Setze review_submission_id NACH der Selectbox, nicht davor!
 st.session_state.review_submission_id = current_id
 
 # Get current submission details
@@ -203,11 +206,17 @@ st.sidebar.markdown(f"""Aufgabe # {exercise_number}
 
   Eingereicht von: **{submitter}**""")
 
-# Load feedback
+# Load feedback + answer sheet info
 feedback = get_feedback(submission_id)
+answer_sheet_path = get_answer_sheet_path(current_sheet_id) if current_sheet_id else None
 
-# Create two columns
-col1, col2 = st.columns(2)
+show_answer_sheet = st.sidebar.checkbox("Lösungsblatt anzeigen", value=bool(answer_sheet_path))
+
+if show_answer_sheet:
+    col1, col2, col3 = st.columns(3)
+else:
+    col1, col2 = st.columns(2)
+    col3 = None
 
 with col1:
     # Find original submission files
@@ -222,11 +231,8 @@ with col1:
                             str(pdf_file),
                             resolution_boost=3,
                             width="100%",
-                            height=800,
                             render_text=True,
-                        
-                        
-                            )
+                        )
                     except Exception as e:
                         st.error(f"Fehler beim Anzeigen der PDF: {e}")
         else:
@@ -235,24 +241,38 @@ with col1:
         st.error(f"Abgabepfad nicht gefunden: {submission_path}")
 
 with col2:
-    st.subheader("Feedback & Benotung")
-    
     if feedback:
-        points, markdown_content = feedback
-        st.write(f"**Punkte:** {points}")
-        st.markdown("### Feedback")
-        st.markdown(markdown_content)
-        
-        # Look for feedback PDF
-        feedback_pdf_dir = Path(submission_path).parent / "feedback"
-        if feedback_pdf_dir.exists():
-            pdf_files = list(feedback_pdf_dir.glob("*.pdf"))
-            if pdf_files:
-                st.write("**Feedback PDF:**")
-                for pdf_file in pdf_files:
-                    try:
-                        pdf_viewer(str(pdf_file))
-                    except Exception as e:
-                        st.error(f"Fehler beim Anzeigen der Feedback-PDF: {e}")
+        feedback_pdf_dir = Path(submission_path)
+        feedback_pdfs = (
+            sorted(feedback_pdf_dir.glob("feedback_*.pdf")) if feedback_pdf_dir.exists() else []
+        )
+        if feedback_pdfs:
+            for pdf_file in feedback_pdfs:
+                try:
+                    pdf_viewer(
+                        str(pdf_file),
+                        resolution_boost=3,
+                        width="100%",
+                        render_text=True,
+                    )
+                except Exception as e:
+                    st.error(f"Fehler beim Anzeigen der Feedback-PDF: {e}")
     else:
         st.info("Kein Feedback für diese Abgabe verfügbar.")
+
+if show_answer_sheet and col3 is not None:
+    with col3:
+        if answer_sheet_path and Path(answer_sheet_path).exists():
+            try:
+                pdf_viewer(
+                    answer_sheet_path,
+                    resolution_boost=3,
+                    width="100%",
+                    render_text=True,
+                )
+            except Exception as error:
+                st.error(f"Fehler beim Anzeigen des Lösungsblatts: {error}")
+        elif answer_sheet_path:
+            st.warning("Gespeichertes Lösungsblatt wurde nicht gefunden.")
+        else:
+            st.info("Kein Lösungsblatt für dieses Blatt hinterlegt.")

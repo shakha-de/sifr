@@ -90,6 +90,6 @@ def apply_error_codes(
         info = code_map[code]
         updated_points = max(0.0, updated_points - info.deduction)
         if info.comment:
-            updated_markdown += f"\n\n*{info.description}: -{info.deduction:g}P*\n{info.comment}"
+            updated_markdown += f"\n\n ### {info.description}: -{info.deduction:g}P\n{info.comment}"
 
     return updated_points, updated_markdown

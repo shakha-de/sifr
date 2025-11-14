@@ -1,6 +1,16 @@
 [browser]
 serverAddress = "localhost"
-
 gatherUsageStats = false
 
 
+[theme]
+primaryColor="#368429"
+backgroundColor="#000000ff"
+secondaryBackgroundColor="#272727"
+textColor="#ffffff"
+
+
+[theme.sidebar]
+primaryColor = "#368429"
+backgroundColor = "#000000ff"
+secondaryBackgroundColor = "#272727"
