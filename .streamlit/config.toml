@@ -12,5 +12,5 @@ textColor="#ffffff"
 
 [theme.sidebar]
 primaryColor = "#368429"
-backgroundColor = "#000000ff"
+backgroundColor = "#0f0f0fff"
 secondaryBackgroundColor = "#272727"

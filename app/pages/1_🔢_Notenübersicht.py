@@ -29,7 +29,7 @@ if not marks_path.exists():
 # Load the CSV
 try:
     df = pd.read_csv(marks_path)
-    st.subheader("Edit the CSV")
+    st.subheader("CSV Editor")
     edited_df = st.data_editor(df, num_rows="dynamic")
 except Exception as e:
     st.error(f"Error loading CSV: {e}")

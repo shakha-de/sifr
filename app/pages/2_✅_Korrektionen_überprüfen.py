@@ -175,12 +175,17 @@ if current_id is None or current_id not in id_to_label_map:
 current_label = id_to_label_map[current_id]
 current_index = submission_ids_ordered.index(current_id)
 
+if (
+    selectbox_key not in st.session_state
+    or st.session_state[selectbox_key] not in submission_labels
+):
+    st.session_state[selectbox_key] = current_label
+
 # Display the selectbox
 selected_label = st.sidebar.selectbox(
     "Wähle eine Abgabe",
     options=submission_labels,
-    index=submission_labels.index(current_label) if current_label in submission_labels else 0,
-    key=selectbox_key
+    key=selectbox_key,
 )
 
 # Update if selection changed
@@ -191,6 +196,7 @@ if selected_label != current_label:
     st.rerun()
 
 st.session_state.review_submission_id = current_id
+set_review_current_submission_id(current_id)
 
 # Get current submission details
 submission_id = submission_id_map[selected_label]
@@ -210,7 +216,34 @@ st.sidebar.markdown(f"""Aufgabe # {exercise_number}
 feedback = get_feedback(submission_id)
 answer_sheet_path = get_answer_sheet_path(current_sheet_id) if current_sheet_id else None
 
-show_answer_sheet = st.sidebar.checkbox("Lösungsblatt anzeigen", value=bool(answer_sheet_path))
+checkbox_key = f"review_show_answer_sheet_{current_sheet_id or 'unknown'}"
+pref_storage_key = f"review_answer_sheet_pref_{current_sheet_id or 'unknown'}"
+saved_pref_value = load_grader_state(pref_storage_key)
+
+def _parse_bool(value: str | None, fallback: bool) -> bool:
+    if value is None:
+        return fallback
+    return value.lower() in {"true", "1", "yes"}
+
+default_checkbox_value = _parse_bool(saved_pref_value, bool(answer_sheet_path))
+
+if checkbox_key not in st.session_state:
+    st.session_state[checkbox_key] = default_checkbox_value
+elif not answer_sheet_path and st.session_state[checkbox_key]:
+    st.session_state[checkbox_key] = False
+    save_grader_state(pref_storage_key, "false")
+
+def _persist_answer_sheet_pref():
+    save_grader_state(
+        pref_storage_key,
+        "true" if st.session_state[checkbox_key] else "false",
+    )
+
+show_answer_sheet = st.sidebar.checkbox(
+    "Lösungsblatt anzeigen",
+    key=checkbox_key,
+    on_change=_persist_answer_sheet_pref,
+)
 
 if show_answer_sheet:
     col1, col2, col3 = st.columns(3)
@@ -229,9 +262,10 @@ with col1:
                     try:
                         pdf_viewer(
                             str(pdf_file),
-                            resolution_boost=3,
+                            resolution_boost=2,
                             width="100%",
                             render_text=True,
+                            height=800
                         )
                     except Exception as e:
                         st.error(f"Fehler beim Anzeigen der PDF: {e}")
@@ -251,9 +285,10 @@ with col2:
                 try:
                     pdf_viewer(
                         str(pdf_file),
-                        resolution_boost=3,
+                        resolution_boost=2,
                         width="100%",
                         render_text=True,
+                        height=800
                     )
                 except Exception as e:
                     st.error(f"Fehler beim Anzeigen der Feedback-PDF: {e}")
@@ -266,9 +301,10 @@ if show_answer_sheet and col3 is not None:
             try:
                 pdf_viewer(
                     answer_sheet_path,
-                    resolution_boost=3,
+                    resolution_boost=2,
                     width="100%",
                     render_text=True,
+                    height=800
                 )
             except Exception as error:
                 st.error(f"Fehler beim Anzeigen des Lösungsblatts: {error}")

@@ -69,17 +69,19 @@ selected_sheet_id = sheet_lookup[selected_sheet_name]
 
 with st.form("add_error_code_form"):
     st.subheader("Neuen Fehlercode hinzufügen")
-    new_code = st.text_input("Code", help="Kurzes Kürzel, z. B. FC1").strip()
-    new_desc = st.text_input("Beschreibung", help="Kurzbeschreibung des Fehlers").strip()
+    new_code = st.text_input("Code", help="Kurzes Kürzel, z. B. FC1", placeholder="S4.1").strip()
+    new_desc = st.text_input("Beschreibung", help="Kurzbeschreibung des Fehlers", placeholder="Unvollständige Erklärung").strip()
     new_abzug = st.number_input(
         "Abzug Punkte",
         min_value=0.0,
         step=0.5,
         help="Wieviele Punkte sollen standardmäßig abgezogen werden?",
+        placeholder="0.5"
     )
     new_komm = st.text_area(
         "Kommentar",
         help="Optionaler Langtext, der automatisch dem Feedback hinzugefügt wird.",
+        placeholder="Verteilungen müssen immer komplett angegeben werden."
     ).strip()
 
     submitted = st.form_submit_button("Fehlercode speichern", type="primary")
