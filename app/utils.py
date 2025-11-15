@@ -17,7 +17,19 @@ def find_pdfs_in_submission(submission_path):
     return pdfs
 
 def generate_feedback_pdf(markdown_content, name, points, output_path, sheet_number, exercise_number):
-    """Generate a PDF from markdown content using pandoc and xelatex."""
+    """Generate a PDF from markdown content using pandoc and xelatex.
+    
+    Args:
+        markdown_content: The markdown feedback content
+        name: Student/group name
+        points: Points awarded
+        output_path: Path where PDF should be saved
+        sheet_number: Exercise sheet number
+        exercise_number: Exercise number
+        
+    Returns:
+        tuple: (success: bool, error_message: str or None)
+    """
     markdown_content = (markdown_content or "").strip()
     points_display = _format_points(points) if isinstance(points, (int, float)) else str(points)
 
@@ -40,30 +52,69 @@ $$\\underline{{\\textbf{{ANMERKUNGEN}}}}$$
     temp_md_path = Path(output_path).with_suffix(".md")
 
     try:
-        temp_md_path.write_text(full_md, encoding="utf-8")
-        pypandoc.convert_file(
-            str(temp_md_path),
-            "pdf",
-            outputfile=output_path,
-            extra_args=[
-                "--pdf-engine=xelatex",
-                "-V",
-                "geometry:margin=2.5cm",
-                "-V",
-                "fontsize=12pt",
-                "-V",
-                "mainfont=DejaVuSerif",
-                "-V",
-                "monofont=DejaVuSansMono",
-            ],
-        )
+        # Validate output directory exists
+        output_dir = Path(output_path).parent
+        if not output_dir.exists():
+            error_msg = f"Output directory does not exist: {output_dir}"
+            logger.error(error_msg)
+            return False, error_msg
+            
+        # Write temporary markdown file
+        try:
+            temp_md_path.write_text(full_md, encoding="utf-8")
+        except (IOError, OSError, PermissionError) as e:
+            error_msg = f"Failed to write temporary markdown file: {e}"
+            logger.error(error_msg)
+            return False, error_msg
+        
+        # Convert to PDF using pandoc
+        try:
+            pypandoc.convert_file(
+                str(temp_md_path),
+                "pdf",
+                outputfile=output_path,
+                extra_args=[
+                    "--pdf-engine=xelatex",
+                    "-V",
+                    "geometry:margin=2.5cm",
+                    "-V",
+                    "fontsize=12pt",
+                    "-V",
+                    "mainfont=DejaVuSerif",
+                    "-V",
+                    "monofont=DejaVuSansMono",
+                ],
+            )
+        except RuntimeError as e:
+            # Pandoc or LaTeX engine errors
+            error_str = str(e).lower()
+            if "pandoc" in error_str and "not found" in error_str:
+                error_msg = "Pandoc is not installed or not found in PATH"
+            elif "xelatex" in error_str or "latex" in error_str:
+                error_msg = f"LaTeX engine error: {e}"
+            else:
+                error_msg = f"PDF conversion failed: {e}"
+            logger.error(error_msg)
+            temp_md_path.unlink(missing_ok=True)
+            return False, error_msg
+        except Exception as e:
+            error_msg = f"Unexpected error during PDF conversion: {e}"
+            logger.error(error_msg)
+            temp_md_path.unlink(missing_ok=True)
+            return False, error_msg
+            
+        # Clean up temporary file
         temp_md_path.unlink(missing_ok=True)
-        return True
+        logger.info(f"Successfully generated PDF: {output_path}")
+        return True, None
+        
     except Exception as e:
-        print(f"Error generating PDF: {e}")
+        # Catch-all for any unexpected errors
+        error_msg = f"Unexpected error in generate_feedback_pdf: {e}"
+        logger.error(error_msg)
         if temp_md_path.exists():
-            temp_md_path.unlink()
-        return False
+            temp_md_path.unlink(missing_ok=True)
+        return False, error_msg
 
 
 def _format_points(points: float) -> str:

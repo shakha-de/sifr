@@ -581,14 +581,15 @@ with right_col:
 
         output_pdf = os.path.join(submission_path, f"feedback_{group_name}.pdf")
         try:
-            if generate_feedback_pdf(
+            success, error_message = generate_feedback_pdf(
                 st.session_state[markdown_key],
                 submitter_name,
                 st.session_state[points_key],
                 output_pdf,
                 sheet_number,
                 exercise_number,
-            ):
+            )
+            if success:
                 status_to_save = st.session_state.get(status_key, "FINAL_MARK")
                 points_to_save = st.session_state[points_key]
 
@@ -625,7 +626,7 @@ with right_col:
                 else:
                     st.success(f"Feedback PDF erstellt: {output_pdf}")
             else:
-                st.error("Fehler beim Erstellen der PDF.")
+                st.error(f"Fehler beim Erstellen der PDF: {error_message or 'Unbekannter Fehler'}")
         except Exception as error:  # pragma: no cover - feedback for UI only
             st.exception(error)
 
