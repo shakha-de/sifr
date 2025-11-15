@@ -10,6 +10,7 @@ from db import (
     get_submissions,
     get_feedback,
     get_sheet_id_by_name,
+    get_feedback_submission_ids,
 )
 from review_state import ReviewStateManager
 from helpers import SheetContext
@@ -43,8 +44,9 @@ sheet_context = SheetContext(
 state_manager = ReviewStateManager(current_root, current_sheet_id)
 state_manager.ensure_defaults()
 
-# Load submissions
+# Load submissions + feedback map
 submissions = get_submissions()
+feedback_ids = get_feedback_submission_ids()
 if not submissions:
     st.warning("Keine Submissions gefunden. Bitte Archive überprüfen.")
     st.stop()
@@ -73,7 +75,9 @@ filtered_submissions = [
 
 # Build submission labels and map
 def build_submission_label(row):
-    status_flag = "✅" if row[5] in ("FINAL_MARK", "PROVISIONAL_MARK") else "⭕"
+    submission_id = row[0]
+    corrected = row[5] in ("FINAL_MARK", "PROVISIONAL_MARK") or submission_id in feedback_ids
+    status_flag = "✅" if corrected else "⭕"
     return f"{status_flag} {row[3]} ({row[4]})"
 
 submission_labels = [build_submission_label(row) for row in filtered_submissions]

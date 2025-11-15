@@ -267,6 +267,17 @@ def get_feedback(submission_id):
     return row
 
 
+def get_feedback_submission_ids() -> set[int]:
+    """Return all submission IDs that already have feedback entries."""
+
+    conn = sqlite3.connect(_resolve_db_path())
+    cursor = conn.cursor()
+    cursor.execute('SELECT DISTINCT submission_id FROM feedback')
+    rows = cursor.fetchall()
+    conn.close()
+    return {row[0] for row in rows}
+
+
 def get_answer_sheet_path(sheet_id: int) -> str | None:
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()

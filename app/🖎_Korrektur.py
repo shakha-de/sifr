@@ -1,5 +1,4 @@
 import os
-import tarfile
 import re
 from pathlib import Path
 from typing import cast
@@ -9,17 +8,13 @@ from streamlit_pdf_viewer import pdf_viewer
 from loguru import logger
 
 
-from config import get_data_dir
 from db import (
     get_error_codes,
     get_sheet_id_by_name,
-    get_exercise_max_points,
     get_feedback,
     get_submissions,
     init_db,
-    save_exercise_max_points,
     save_feedback_with_submission,
-    get_answer_sheet_path,
     scan_and_insert_submissions,
     save_grader_state,
     load_grader_state,
@@ -43,16 +38,15 @@ from helpers import (
     resolve_sheet_context,
 )
 from korrektur_utils import (
-    find_candidate_roots,
     build_exercise_options,
     filter_submissions,
     classify_pdf_candidates,
+    filter_by_search,
+    sort_submissions,
+    compute_progress_stats,
 )
-from answer_sheet import render_answer_sheet_sidebar
+from sidebar_panels import ensure_session_defaults
 
-
-DATA_ROOT = get_data_dir()
-DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
 st.set_page_config(
     page_title="Sifr | Korrektur | Feedback Dateien erstellen",
@@ -67,60 +61,6 @@ st.set_page_config(
     )
 
 patch_streamlit_html()
-
-
-def ensure_session_defaults() -> None:
-    state = st.session_state
-    if "exercise_max_points" not in state:
-        state.exercise_max_points = get_exercise_max_points()
-
-    state.setdefault("archive_loaded", False)
-    state.setdefault("available_roots", find_candidate_roots(DATA_ROOT))
-    if "current_root" not in state:
-        roots = state.available_roots
-        state.current_root = roots[0] if roots else None
-
-    defaults = {
-        "last_scanned_root": None,
-        "force_rescan": False,
-        "submission_selector": None,
-        "exercise_filter": "Alle",
-        "nav_action": None,
-    }
-    for key, value in defaults.items():
-        state.setdefault(key, value)
-
-
-def render_archive_loader() -> None:
-    with st.sidebar.expander("Neues Archive laden"):
-        uploaded_file = st.file_uploader(
-            "Wähle ein tar.gz Archive", type=["tar.gz"], key="archive_uploader"
-        )
-        st.caption(f"Datenverzeichnis: {DATA_ROOT}")
-        if st.button("Archive entpacken und laden", key="extract_archive"):
-            if uploaded_file is None:
-                st.warning("Bitte wähle zuerst ein Archive aus.")
-            else:
-                with st.spinner("Entpacke Archive..."):
-                    try:
-                        uploaded_file.seek(0)
-                        with tarfile.open(fileobj=uploaded_file, mode="r:gz") as tar:
-                            tar.extractall(str(DATA_ROOT), filter="data")
-                        candidates = find_candidate_roots(DATA_ROOT)
-                        if candidates:
-                            st.session_state.available_roots = candidates
-                            st.session_state.current_root = candidates[0]
-                            st.session_state.last_scanned_root = None
-                            st.session_state.force_rescan = True
-                            st.session_state.archive_loaded = True
-                            st.session_state.pop("submission_selector", None)
-                            st.success(
-                                f"Archive entpackt. {len(candidates)} mögliche Arbeitsordner gefunden."
-                            )
-                        else:
-                            st.error("Konnte kein gültiges Übungsblatt-Verzeichnis finden.")
-                    except Exception as error:  # pragma: no cover - UI feedback only
-                        st.error(f"Fehler beim Entpacken: {error}")
 
 
 def handle_root_selection() -> str | None:
@@ -161,27 +101,47 @@ def maybe_rescan_current_root(current_root: str | None) -> None:
         state.force_rescan = False
 
 
-def summarize_progress(submissions: list[SubmissionRecord]) -> None:
-    total = len(submissions)
-    corrected = sum(
-        1 for record in submissions if record.status in ["FINAL_MARK", "PROVISIONAL_MARK"]
-    )
-    st.sidebar.write(f"Korrekturstand: {corrected}/{total}")
+def _render_progress_block(title: str, submissions: list[SubmissionRecord]) -> None:
+    stats = compute_progress_stats(submissions)
+    total = stats["total"]
+    corrected = stats["corrected"]
+    st.sidebar.metric(title, f"{corrected}/{total}")
+
+    status_counts = cast(dict[str, int], stats["status_counts"])
+    if status_counts:
+        breakdown = ", ".join(
+            f"{status}: {count}" for status, count in sorted(status_counts.items())
+        )
+        st.sidebar.caption(f"Status: {breakdown}")
+    else:
+        st.sidebar.caption("Keine Abgaben im aktuellen Filter.")
+
+
+def render_progress_section(
+    all_submissions: list[SubmissionRecord],
+    filtered_submissions: list[SubmissionRecord],
+) -> None:
+    st.sidebar.write("---")
+    st.sidebar.subheader("Fortschritt")
+    _render_progress_block("Gesamt", all_submissions)
+    _render_progress_block("Aktuelle Ansicht mit Filtern", filtered_submissions)
 def render_exercise_filter(exercise_options: list[str]) -> str:
     saved_filter = load_grader_state("exercise_filter", "Alle")
     if saved_filter not in exercise_options:
         saved_filter = "Alle"
 
-    if st.session_state.exercise_filter not in exercise_options:
-        st.session_state.exercise_filter = saved_filter
+    current_filter = st.session_state.get("exercise_filter", saved_filter)
+    if current_filter not in exercise_options:
+        current_filter = saved_filter
+        st.session_state.exercise_filter = current_filter
 
     selected = st.sidebar.selectbox(
         "Aufgabe filtern",
         options=exercise_options,
-        index=exercise_options.index(st.session_state.exercise_filter)
-        if st.session_state.exercise_filter in exercise_options
+        index=exercise_options.index(current_filter)
+        if current_filter in exercise_options
         else 0,
-        key="exercise_filter",
+        key="exercise_filter_select",
     )
 
     if selected != load_grader_state("exercise_filter", "Alle"):
@@ -252,13 +212,12 @@ def render_meme_section(submission_id: int, markdown_key: str):
 
 init_db()
 ensure_session_defaults()
+st.session_state.setdefault("submission_selector", None)
 
 st.sidebar.title("Sifr")
-render_archive_loader()
 current_root = handle_root_selection()
 maybe_rescan_current_root(current_root)
 sheet_context = resolve_sheet_context(current_root, get_sheet_id_by_name)
-render_answer_sheet_sidebar(sheet_context)
 
 raw_submissions = get_submissions()
 submissions = convert_submissions(raw_submissions)
@@ -266,28 +225,54 @@ submissions = convert_submissions(raw_submissions)
 if not submissions and st.session_state.archive_loaded:
     st.warning("Keine Submissions gefunden. Bitte Archive überprüfen.")
 
-summarize_progress(submissions)
 exercise_options = build_exercise_options(submissions)
 selected_exercise = render_exercise_filter(exercise_options)
+search_query = st.sidebar.text_input(
+    "Suche nach Name oder Team",
+    key="submission_search_query",
+    placeholder="z. B. Nachname oder Team",
+)
+sort_mode = st.sidebar.selectbox(
+    "Sortierung",
+    options=[
+        "Nach ID",
+        "Status: offen zuerst",
+        "Status: fertig zuerst",
+        "Alphabetisch",
+    ],
+    key="submission_sort_mode",
+)
+
 filtered_submissions = filter_submissions(submissions, selected_exercise)
+filtered_submissions = filter_by_search(filtered_submissions, search_query)
+filtered_submissions = sort_submissions(filtered_submissions, sort_mode)
+
+filtered_rows = [
+    (
+        record.id,
+        record.path,
+        record.group_name,
+        record.submitter,
+        record.exercise_code,
+        record.status,
+    )
+    for record in filtered_submissions
+]
 
 submission_ids_ordered, id_to_label_map, label_to_id_map = navigate_submissions(
-    raw_submissions,
-    exercise_filter=selected_exercise,
+    filtered_rows,
+    exercise_filter=None,
 )
 
 if not submission_ids_ordered:
-    st.sidebar.warning(
-        "Keine Abgaben verfügbar. Bitte ein Archive hochladen oder den Filter anpassen."
-    )
-    st.info("Keine Abgaben für den aktuellen Filter. Passe die Auswahl an oder lade neue Daten.")
+    st.sidebar.warning("Keine Abgaben für die aktuelle Suche oder Filterauswahl.")
+    st.info("Passe die Suche/Filter an oder lade neue Daten.")
     st.stop()
 
 st.sidebar.write("---")
 
-if not st.session_state.submission_selector or (
-    st.session_state.submission_selector not in id_to_label_map
-):
+current_selector = st.session_state.get("submission_selector")
+if not current_selector or current_selector not in id_to_label_map:
     saved_id = load_grader_state("current_submission_id")
     candidate_id: int | None = None
     if saved_id:
@@ -354,6 +339,8 @@ st.sidebar.selectbox(
     on_change=on_submission_change,
 )
 
+render_progress_section(submissions, filtered_submissions)
+
 current_id = cast(int, st.session_state.submission_selector)
 submission_lookup = {record.id: record for record in filtered_submissions}
 submission_record = submission_lookup.get(current_id)
@@ -366,37 +353,7 @@ if submission_record is None:
     st.error("Für diesen Filter stehen keine Abgaben zur Verfügung.")
     st.stop()
 
-
-def make_max_points_callback(exercise: str):
-    def callback():
-        key = f"max_points_{exercise}"
-        if key in st.session_state:
-            value = st.session_state[key]
-            save_exercise_max_points(exercise, value)
-            st.session_state.exercise_max_points[exercise] = value
-
-    return callback
-
-
-exercise_names = [name for name in exercise_options if name != "Alle"]
-with st.sidebar.expander("Einstellungen"):
-    if exercise_names:
-        st.write("Maximale Punkte pro Aufgabe")
-        for exercise in exercise_names:
-            key_name = f"max_points_{exercise}"
-            default_value = float(st.session_state.exercise_max_points.get(exercise, 0.0))
-            st.number_input(
-                exercise,
-                min_value=0.0,
-                value=default_value,
-                step=0.5,
-                key=key_name,
-                on_change=make_max_points_callback(exercise),
-            )
-    else:
-        st.info("Keine Aufgaben gefunden. Bitte Archive laden.")
-
-    show_meme = st.checkbox("Add Meme Menü anzeigen", value=True)
+show_meme = st.session_state.get("show_meme_menu", True)
 
 submission_id = submission_record.id
 submission_path = submission_record.path
@@ -443,7 +400,7 @@ with left_col:
         for pdf in candidate_pdfs:
             pdf_viewer(
                 pdf,
-                resolution_boost=3,
+                resolution_boost=2,
                 width="100%",
                 height=800,
                 render_text=True,
@@ -467,7 +424,7 @@ with left_col:
 with right_col:
     st.header("Feedback")
     if max_points_for_exercise:
-        st.caption(f"Maximale Punkte für {current_exercise_name}: {max_points_for_exercise:g}")
+        st.caption(f"Maximale Punkte für Aufgabe {re.split("-",current_exercise_name)[1]}: {max_points_for_exercise:g}")
 
     points = st.number_input(
         "Punkte",

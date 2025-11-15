@@ -56,7 +56,7 @@ This keeps host dependencies clean and makes it easy to ship a ready-to-run imag
 
 ## Running the App
 - Once started, open `http://localhost:8501` in your browser.
-- Use the sidebar to upload an archive, select exercises, and record feedback.
+- Use the main **Korrektur** page for grading, and switch to the `4_⚙️_Daten_und_Einstellungen` page to upload archives, manage answer sheets, and tweak per-exercise settings.
 
 ## Testing
 - Run the test suite with your preferred workflow (`uv run pytest`, `docker run ... pytest`, or `pytest` inside an activated virtual environment).
