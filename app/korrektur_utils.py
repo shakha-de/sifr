@@ -5,6 +5,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Iterable, Sequence
 
+import streamlit as st
+
 try:  # Allow running inside the app directory or as a package import
     from helpers import SubmissionRecord
 except ImportError:  # pragma: no cover - fallback for package imports
@@ -18,6 +20,7 @@ __all__ = [
     "filter_by_search",
     "sort_submissions",
     "compute_progress_stats",
+    "render_manual_feedback_popover",
 ]
 
 
@@ -157,3 +160,83 @@ def compute_progress_stats(submissions: Iterable[SubmissionRecord]) -> dict[str,
         "corrected": corrected,
         "status_counts": dict(status_counter),
     }
+
+
+def render_manual_feedback_popover(
+    submission_id: int,
+    points_key: str,
+    markdown_key: str,
+):
+    """Provide a quick popup to append custom feedback and apply deductions."""
+
+    st.caption("Direktes Feedback hinzufügen")
+    with st.popover(
+        ":green[Feedback hinzufügen]",
+        use_container_width=True,
+    ):
+        desc_key = f"manual_feedback_desc_{submission_id}"
+        deduction_key = f"manual_feedback_deduction_{submission_id}"
+        comment_key = f"manual_feedback_comment_{submission_id}"
+        reset_flag_key = f"manual_feedback_reset_{submission_id}"
+
+        if desc_key not in st.session_state:
+            st.session_state[desc_key] = ""
+        if comment_key not in st.session_state:
+            st.session_state[comment_key] = ""
+        if deduction_key not in st.session_state:
+            st.session_state[deduction_key] = 0.0
+
+        if st.session_state.pop(reset_flag_key, False):
+            st.session_state[desc_key] = ""
+            st.session_state[comment_key] = ""
+            st.session_state[deduction_key] = 0.0
+
+        current_points = float(st.session_state.get(points_key, 0.0))
+        current_markdown = st.session_state.get(markdown_key, "")
+
+        beschreibung = st.text_input(
+            "Beschreibung",
+            key=desc_key,
+            placeholder="z. B. Randbedingungen fehlen",
+        )
+        abzugpunkte = st.number_input(
+            "Abzugpunkte",
+            min_value=0.0,
+            max_value=current_points,
+            step=0.5,
+            key=deduction_key,
+        )
+        kommentar = st.text_area(
+            "Kommentar",
+            key=comment_key,
+            height=120,
+        )
+
+        if st.button(
+            "In Markdown übernehmen",
+            key=f"manual_feedback_submit_{submission_id}",
+            type="primary",
+        ):
+            if not beschreibung.strip():
+                st.error("Bitte eine Beschreibung angeben.")
+                return
+            if abzugpunkte <= 0:
+                st.error("Abzugpunkte müssen größer als 0 sein.")
+                return
+
+            addition = f"\n\n### {beschreibung.strip()}: -{abzugpunkte:g}P"
+            comment_text = kommentar.strip()
+            if comment_text:
+                addition += f"\n{comment_text}"
+
+            updated_points = max(0.0, current_points - float(abzugpunkte))
+            updated_markdown = current_markdown + addition
+
+            pending_points_key = f"pending_points_{submission_id}"
+            pending_markdown_key = f"pending_markdown_{submission_id}"
+            st.session_state[pending_points_key] = updated_points
+            st.session_state[pending_markdown_key] = updated_markdown
+            st.session_state[reset_flag_key] = True
+
+            st.success("Feedback hinzugefügt!")
+            st.rerun()

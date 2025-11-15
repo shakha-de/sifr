@@ -44,6 +44,7 @@ from korrektur_utils import (
     filter_by_search,
     sort_submissions,
     compute_progress_stats,
+    render_manual_feedback_popover,
 )
 from sidebar_panels import ensure_session_defaults
 
@@ -206,7 +207,6 @@ def render_meme_section(submission_id: int, markdown_key: str):
             st.rerun()
         else:
             st.error("Bitte einen Link eingeben.")
-
 
 
 
@@ -452,6 +452,7 @@ with right_col:
             )
         )
 
+    render_manual_feedback_popover(submission_id, points_key, markdown_key)
     render_error_code_section(submission_id, points_key, markdown_key, sheet_context)
 
     status_options = [
