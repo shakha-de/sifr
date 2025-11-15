@@ -2,6 +2,9 @@
 serverAddress = "localhost"
 gatherUsageStats = false
 
+[client]
+
+
 
 [theme]
 primaryColor="#368429"
@@ -14,3 +17,4 @@ textColor="#ffffff"
 primaryColor = "#368429"
 backgroundColor = "#0f0f0fff"
 secondaryBackgroundColor = "#272727"
+

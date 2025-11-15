@@ -7,70 +7,42 @@ from typing import cast
 import streamlit as st
 from streamlit_pdf_viewer import pdf_viewer
 
-from utils import get_markdown_placeholder_text
 
-try:
-    from app.config import get_data_dir
-    from app.db import (
-        get_error_codes,
-        get_sheet_id_by_name,
-        get_exercise_max_points,
-        get_feedback,
-        get_submissions,
-        init_db,
-        save_exercise_max_points,
-        save_feedback_with_submission,
-        get_answer_sheet_path,
-        save_answer_sheet_path,
-        delete_answer_sheet_path,
-        scan_and_insert_submissions,
-        save_grader_state,
-        load_grader_state,
-        navigate_submissions,
-        get_submission_index,
-        navigate_to_next,
-        navigate_to_prev,
-    )
-    from app.utils import find_pdfs_in_submission, generate_feedback_pdf, update_marks_csv
-    from app.helpers import (
-        ErrorCode,
-        SheetContext,
-        SubmissionRecord,
-        apply_error_codes,
-        convert_submissions,
-        resolve_sheet_context,
-    )
-except ImportError:  # Fallback when running as a script inside the package folder
-    from config import get_data_dir
-    from db import (
-        get_error_codes,
-        get_sheet_id_by_name,
-        get_exercise_max_points,
-        get_feedback,
-        get_submissions,
-        init_db,
-        save_exercise_max_points,
-        save_feedback_with_submission,
-        get_answer_sheet_path,
-        save_answer_sheet_path,
+from config import get_data_dir
+from db import (
+    get_error_codes,
+    get_sheet_id_by_name,
+    get_exercise_max_points,
+    get_feedback,
+    get_submissions,
+    init_db,
+    save_exercise_max_points,
+    save_feedback_with_submission,
+    get_answer_sheet_path,
+    save_answer_sheet_path,
     delete_answer_sheet_path,
-        scan_and_insert_submissions,
-        save_grader_state,
-        load_grader_state,
-        navigate_submissions,
-        get_submission_index,
-        navigate_to_next,
-        navigate_to_prev,
-    )
-    from utils import find_pdfs_in_submission, generate_feedback_pdf, update_marks_csv
-    from helpers import (
-        ErrorCode,
-        SheetContext,
-        SubmissionRecord,
-        apply_error_codes,
-        convert_submissions,
-        resolve_sheet_context,
-    )
+    scan_and_insert_submissions,
+    save_grader_state,
+    load_grader_state,
+    navigate_submissions,
+    get_submission_index,
+    navigate_to_next,
+    navigate_to_prev,
+)
+from utils import (
+    find_pdfs_in_submission,
+    generate_feedback_pdf,
+    update_marks_csv,
+    patch_streamlit_html,
+    get_markdown_placeholder_text)
+from helpers import (
+    ErrorCode,
+    SheetContext,
+    SubmissionRecord,
+    apply_error_codes,
+    convert_submissions,
+    resolve_sheet_context,
+)
 
 
 DATA_ROOT = get_data_dir()
@@ -88,6 +60,7 @@ st.set_page_config(
         }
     )
 
+patch_streamlit_html()
 
 def find_candidate_roots(base_dir: os.PathLike[str] | str = DATA_ROOT) -> list[str]:
     base_path = Path(base_dir)

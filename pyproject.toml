@@ -10,4 +10,5 @@ dependencies = [
     "streamlit-pdf-viewer>=0.0.26",
     "pypandoc>=1.13",
     "markdown>=3.6",
+    "loguru>=0.7.3",
 ]

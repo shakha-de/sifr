@@ -1,6 +1,7 @@
 import csv
-import os
+import os, sys
 from pathlib import Path
+from loguru import logger
 
 import pypandoc
 
@@ -114,3 +115,21 @@ Hier eine kurze Zusammenfassung...
 
 *Verwende **fett** für wichtige Teile und *kursiv* für Betonungen.*"""
     return str
+
+def patch_streamlit_html():
+    import streamlit
+    streamlit_dir = os.path.dirname(streamlit.__file__)
+    index_path = os.path.join(streamlit_dir, "static", "index.html")
+
+    with open(index_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    if '<html lang="de">' not in content:
+        content = content.replace("<html>", '<html lang="de">')
+
+        with open(index_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        logger.info("✔ Streamlit HTML gepatcht: lang=de gesetzt")
+    else:
+        logger.info("✔ Streamlit HTML war bereits korrekt gesetzt")
