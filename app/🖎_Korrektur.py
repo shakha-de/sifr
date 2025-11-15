@@ -6,6 +6,7 @@ from typing import cast
 
 import streamlit as st
 from streamlit_pdf_viewer import pdf_viewer
+from loguru import logger
 
 
 from config import get_data_dir
@@ -47,6 +48,7 @@ from korrektur_utils import (
     find_candidate_roots,
     build_exercise_options,
     filter_submissions,
+    classify_pdf_candidates,
 )
 
 
@@ -495,20 +497,35 @@ left_col, right_col = st.columns([7, 3], gap="medium")
 with left_col:
     st.markdown(f"### Abgabe von: {submitter_name}")
     pdfs = find_pdfs_in_submission(submission_path)
-    if pdfs:
-        for pdf in pdfs:
-            if not os.path.basename(pdf).startswith("feedback_"):
-                pdf_viewer(
-                    pdf,
-                    resolution_boost=3,
-                    width="100%",
-                    height=800,
-                    render_text=True,
-                    show_page_separator=False,
-                    key=f"pdf_viewer_{submission_id}_{os.path.basename(pdf)}",
-                )
+    displayable_pdfs, pdf_issues = classify_pdf_candidates(pdfs)
+    candidate_pdfs = [
+        pdf for pdf in displayable_pdfs if not os.path.basename(pdf).startswith("feedback_")
+    ]
+
+    if candidate_pdfs:
+        for pdf in candidate_pdfs:
+            pdf_viewer(
+                pdf,
+                resolution_boost=3,
+                width="100%",
+                height=800,
+                render_text=True,
+                show_page_separator=False,
+                key=f"pdf_viewer_{submission_id}_{os.path.basename(pdf)}",
+            )
+    elif pdfs:
+        st.info("PDFs gefunden, konnten aber nicht geladen werden.")
     else:
         st.info("Keine PDFs gefunden.")
+
+    if pdf_issues:
+        issue_lines = "\n".join(f"• {Path(path).name}: {reason}" for path, reason in pdf_issues)
+        st.warning(
+            "Folgende PDFs konnten nicht angezeigt werden:\n" + issue_lines,
+            icon="⚠️",
+        )
+        for path, reason in pdf_issues:
+            logger.warning("PDF konnte nicht geladen werden (%s): %s", reason, path)
 
 with right_col:
     st.header("Feedback")

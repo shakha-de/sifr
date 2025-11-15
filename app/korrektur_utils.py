@@ -13,6 +13,7 @@ __all__ = [
     "find_candidate_roots",
     "build_exercise_options",
     "filter_submissions",
+    "classify_pdf_candidates",
 ]
 
 
@@ -60,3 +61,34 @@ def filter_submissions(
     if selected_exercise == "Alle":
         return list(submissions)
     return [record for record in submissions if record.exercise_code == selected_exercise]
+
+
+def classify_pdf_candidates(pdfs: Iterable[str]) -> tuple[list[str], list[tuple[str, str]]]:
+    """Return readable PDFs plus (path, reason) tuples for anything we skip."""
+
+    valid: list[str] = []
+    issues: list[tuple[str, str]] = []
+
+    for candidate in pdfs:
+        path = Path(candidate)
+        reason: str | None = None
+
+        if not path.exists():
+            reason = "Datei nicht gefunden"
+        elif not path.is_file():
+            reason = "Pfad ist keine Datei"
+        else:
+            try:
+                with path.open("rb") as handle:
+                    header = handle.read(4)
+                if len(header) < 4 or not header.startswith(b"%PDF"):
+                    reason = "Datei besitzt keinen PDF-Header"
+            except OSError as exc:
+                reason = f"Datei konnte nicht gelesen werden: {exc}"
+
+        if reason:
+            issues.append((str(path), reason))
+        else:
+            valid.append(str(path))
+
+    return valid, issues

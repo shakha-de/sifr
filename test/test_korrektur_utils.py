@@ -6,6 +6,7 @@ import pytest
 
 from app.korrektur_utils import (
     build_exercise_options,
+    classify_pdf_candidates,
     filter_submissions,
     find_candidate_roots,
 )
@@ -71,3 +72,43 @@ def test_filter_submissions_selects_specific_exercise():
     all_records = filter_submissions(submissions, "Alle")
     assert all_records == submissions
     assert all_records is not submissions
+
+
+def test_classify_pdf_candidates_filters_invalid_paths(tmp_path):
+    valid_pdf = tmp_path / "valid.pdf"
+    valid_pdf.write_bytes(b"%PDF-1.7\n...")
+
+    missing_pdf = tmp_path / "missing.pdf"
+    folder_path = tmp_path / "just_a_dir"
+    folder_path.mkdir()
+    wrong_header = tmp_path / "not_pdf.pdf"
+    wrong_header.write_bytes(b"ABCD")
+
+    valid, issues = classify_pdf_candidates(
+        [str(valid_pdf), str(missing_pdf), str(folder_path), str(wrong_header)]
+    )
+
+    assert valid == [str(valid_pdf)]
+    assert (str(missing_pdf), "Datei nicht gefunden") in issues
+    assert (str(folder_path), "Pfad ist keine Datei") in issues
+    assert (str(wrong_header), "Datei besitzt keinen PDF-Header") in issues
+
+
+def test_classify_pdf_candidates_reports_unreadable_file(tmp_path, monkeypatch):
+    target_pdf = tmp_path / "locked.pdf"
+    target_pdf.write_bytes(b"%PDF-1.4\n")
+
+    original_open = Path.open
+
+    def fake_open(self, mode="r", *args, **kwargs):
+        if self == target_pdf and "b" in mode:
+            raise OSError("permission denied")
+        return original_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    valid, issues = classify_pdf_candidates([str(target_pdf)])
+
+    assert valid == []
+    assert issues and issues[0][0] == str(target_pdf)
+    assert "permission denied" in issues[0][1]
