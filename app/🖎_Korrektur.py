@@ -43,6 +43,11 @@ from helpers import (
     convert_submissions,
     resolve_sheet_context,
 )
+from korrektur_utils import (
+    find_candidate_roots,
+    build_exercise_options,
+    filter_submissions,
+)
 
 
 DATA_ROOT = get_data_dir()
@@ -61,28 +66,6 @@ st.set_page_config(
     )
 
 patch_streamlit_html()
-
-def find_candidate_roots(base_dir: os.PathLike[str] | str = DATA_ROOT) -> list[str]:
-    base_path = Path(base_dir)
-    if not base_path.exists():
-        return []
-    candidates: list[str] = []
-    for item_path in base_path.iterdir():
-        if not item_path.is_dir():
-            continue
-        try:
-            entries = list(item_path.iterdir())
-        except PermissionError:
-            continue
-        has_marks = (item_path / "marks.csv").exists()
-        has_exercises = any(
-            entry.is_dir()
-            and entry.name.lower().startswith(("excercise-", "exercise-"))
-            for entry in entries
-        )
-        if has_marks or has_exercises:
-            candidates.append(str(item_path.resolve()))
-    return sorted(set(candidates))
 
 
 def ensure_session_defaults() -> None:
@@ -183,13 +166,6 @@ def summarize_progress(submissions: list[SubmissionRecord]) -> None:
         1 for record in submissions if record.status in ["FINAL_MARK", "PROVISIONAL_MARK"]
     )
     st.sidebar.write(f"Korrekturstand: {corrected}/{total}")
-
-
-def build_exercise_options(submissions: list[SubmissionRecord]) -> list[str]:
-    exercise_names = sorted({record.exercise_code for record in submissions})
-    return ["Alle"] + exercise_names if exercise_names else ["Alle"]
-
-
 def render_exercise_filter(exercise_options: list[str]) -> str:
     saved_filter = load_grader_state("exercise_filter", "Alle")
     if saved_filter not in exercise_options:
@@ -212,17 +188,6 @@ def render_exercise_filter(exercise_options: list[str]) -> str:
         st.session_state.exercise_filter = selected
 
     return selected
-
-
-def filter_submissions(
-    submissions: list[SubmissionRecord],
-    selected_exercise: str,
-) -> list[SubmissionRecord]:
-    if selected_exercise == "Alle":
-        return submissions
-    return [record for record in submissions if record.exercise_code == selected_exercise]
-
-
 def fetch_error_codes(sheet_context: SheetContext | None) -> list[ErrorCode]:
     if not sheet_context or sheet_context.sheet_id is None:
         return []

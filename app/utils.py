@@ -131,5 +131,3 @@ def patch_streamlit_html():
             f.write(content)
 
         logger.info("✔ Streamlit HTML gepatcht: lang=de gesetzt")
-    else:
-        logger.info("✔ Streamlit HTML war bereits korrekt gesetzt")

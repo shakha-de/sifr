@@ -9,13 +9,10 @@ import os
 from db import (
     get_submissions,
     get_feedback,
-    load_grader_state,
-    save_grader_state,
-    get_review_current_submission_id,
-    set_review_current_submission_id,
     get_sheet_id_by_name,
     get_answer_sheet_path,
 )
+from review_state import ReviewStateManager
 
 
 st.set_page_config(
@@ -37,22 +34,8 @@ if not current_root:
 
 current_sheet_name = Path(current_root).name
 current_sheet_id = get_sheet_id_by_name(current_sheet_name)
-
-
-def _build_selectbox_key(root_value: str | None, exercise_filter: str | None) -> str:
-    """Create a Streamlit widget key using only safe characters."""
-    base = f"{root_value or ''}_{exercise_filter or 'Alle'}"
-    sanitized = "".join(ch if ch.isalnum() else "_" for ch in base)
-    sanitized = sanitized or "default"
-    return f"review_submission_select_{sanitized}"
-
-# Initialize session state
-if "review_submission_id" not in st.session_state:
-    st.session_state.review_submission_id = None
-if "review_exercise_filter" not in st.session_state:
-    st.session_state.review_exercise_filter = "Alle"
-if "review_nav_action" not in st.session_state:
-    st.session_state.review_nav_action = None
+state_manager = ReviewStateManager(current_root, current_sheet_id)
+state_manager.ensure_defaults()
 
 # Load submissions
 submissions = get_submissions()
@@ -65,24 +48,18 @@ exercise_names = sorted({row[4] for row in submissions})
 exercise_options = ["Alle"] + exercise_names if exercise_names else ["Alle"]
 
 # Lade den letzten Filter aus der Datenbank
-saved_exercise_filter = load_grader_state("review_exercise_filter", "Alle")
-if saved_exercise_filter not in exercise_options:
-    saved_exercise_filter = "Alle"
-
-if st.session_state.review_exercise_filter not in exercise_options:
-    st.session_state.review_exercise_filter = saved_exercise_filter
+current_filter = state_manager.sync_exercise_filter(exercise_options)
 
 selected_exercise = st.sidebar.selectbox(
     "Aufgabe filtern",
     options=exercise_options,
-    index=exercise_options.index(st.session_state.review_exercise_filter) if st.session_state.review_exercise_filter in exercise_options else 0,
+    index=exercise_options.index(current_filter) if current_filter in exercise_options else 0,
     key="review_exercise_filter_select",
 )
 
 # Speichere den Filter wenn er sich ändert
-if selected_exercise != load_grader_state("review_exercise_filter", "Alle"):
-    save_grader_state("review_exercise_filter", selected_exercise)
-    st.session_state.review_exercise_filter = selected_exercise
+if selected_exercise != current_filter:
+    state_manager.persist_exercise_filter(selected_exercise)
 
 filtered_submissions = [
     row for row in submissions if selected_exercise == "Alle" or row[4] == selected_exercise
@@ -94,7 +71,7 @@ def build_submission_label(row):
     return f"{status_flag} {row[3]} ({row[4]})"
 
 submission_labels = [build_submission_label(row) for row in filtered_submissions]
-selectbox_key = _build_selectbox_key(st.session_state.get("current_root"), st.session_state.review_exercise_filter)
+selectbox_key = state_manager.submission_selectbox_key(selected_exercise)
 
 # Create comprehensive maps
 submission_id_map = {}  # label -> id
@@ -116,22 +93,11 @@ if not submission_labels:
 # ==================== NAVIGATION BUTTONS (BEFORE SELECTBOX) ====================
 # Process navigation FIRST, then resolve which submission to show
 
-def _get_current_submission_index():
-    """Find the current submission index in the filtered list."""
-    current_id = st.session_state.review_submission_id
-    if current_id is None or current_id not in id_to_label_map:
-        # Try to load from DB
-        saved_id = get_review_current_submission_id()
-        if saved_id and saved_id in id_to_label_map:
-            return submission_ids_ordered.index(saved_id)
-        return 0
-    return submission_ids_ordered.index(current_id)
-
+current_id = state_manager.resolve_current_submission(submission_ids_ordered, id_to_label_map)
+current_index = submission_ids_ordered.index(current_id)
 
 # Display navigation buttons
 col_prev, col_next = st.sidebar.columns([1, 1])
-
-current_index = _get_current_submission_index()
 
 with col_prev:
     if st.button("Letzte", key="review_prev_btn", use_container_width=True, disabled=(current_index <= 0)):
@@ -152,28 +118,15 @@ with st.sidebar:
 if st.session_state.review_nav_action:
     if st.session_state.review_nav_action == "prev" and current_index > 0:
         new_id = submission_ids_ordered[current_index - 1]
-        st.session_state.review_submission_id = new_id
-        set_review_current_submission_id(new_id)
+        state_manager.persist_submission_id(new_id)
     elif st.session_state.review_nav_action == "next" and current_index < len(submission_ids_ordered) - 1:
         new_id = submission_ids_ordered[current_index + 1]
-        st.session_state.review_submission_id = new_id
-        set_review_current_submission_id(new_id)
+        state_manager.persist_submission_id(new_id)
     st.session_state.review_nav_action = None
     st.rerun()
 
 # ==================== SUBMISSION SELECTOR ====================
-# Resolve which submission to display
-current_id = st.session_state.review_submission_id
-if current_id is None or current_id not in id_to_label_map:
-    # Try to load from DB
-    saved_id = get_review_current_submission_id()
-    if saved_id and saved_id in id_to_label_map:
-        current_id = saved_id
-    else:
-        current_id = submission_ids_ordered[0]
-
 current_label = id_to_label_map[current_id]
-current_index = submission_ids_ordered.index(current_id)
 
 if (
     selectbox_key not in st.session_state
@@ -191,12 +144,8 @@ selected_label = st.sidebar.selectbox(
 # Update if selection changed
 if selected_label != current_label:
     submission_id = submission_id_map[selected_label]
-    st.session_state.review_submission_id = submission_id
-    set_review_current_submission_id(submission_id)
+    state_manager.persist_submission_id(submission_id)
     st.rerun()
-
-st.session_state.review_submission_id = current_id
-set_review_current_submission_id(current_id)
 
 # Get current submission details
 submission_id = submission_id_map[selected_label]
@@ -216,33 +165,14 @@ st.sidebar.markdown(f"""Aufgabe # {exercise_number}
 feedback = get_feedback(submission_id)
 answer_sheet_path = get_answer_sheet_path(current_sheet_id) if current_sheet_id else None
 
-checkbox_key = f"review_show_answer_sheet_{current_sheet_id or 'unknown'}"
-pref_storage_key = f"review_answer_sheet_pref_{current_sheet_id or 'unknown'}"
-saved_pref_value = load_grader_state(pref_storage_key)
-
-def _parse_bool(value: str | None, fallback: bool) -> bool:
-    if value is None:
-        return fallback
-    return value.lower() in {"true", "1", "yes"}
-
-default_checkbox_value = _parse_bool(saved_pref_value, bool(answer_sheet_path))
-
-if checkbox_key not in st.session_state:
-    st.session_state[checkbox_key] = default_checkbox_value
-elif not answer_sheet_path and st.session_state[checkbox_key]:
-    st.session_state[checkbox_key] = False
-    save_grader_state(pref_storage_key, "false")
-
-def _persist_answer_sheet_pref():
-    save_grader_state(
-        pref_storage_key,
-        "true" if st.session_state[checkbox_key] else "false",
-    )
+checkbox_key, checkbox_on_change = state_manager.answer_sheet_checkbox_setup(
+    bool(answer_sheet_path)
+)
 
 show_answer_sheet = st.sidebar.checkbox(
     "Lösungsblatt anzeigen",
     key=checkbox_key,
-    on_change=_persist_answer_sheet_pref,
+    on_change=checkbox_on_change,
 )
 
 if show_answer_sheet:
