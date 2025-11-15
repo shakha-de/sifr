@@ -20,8 +20,6 @@ from db import (
     save_exercise_max_points,
     save_feedback_with_submission,
     get_answer_sheet_path,
-    save_answer_sheet_path,
-    delete_answer_sheet_path,
     scan_and_insert_submissions,
     save_grader_state,
     load_grader_state,
@@ -50,6 +48,7 @@ from korrektur_utils import (
     filter_submissions,
     classify_pdf_candidates,
 )
+from answer_sheet import render_answer_sheet_sidebar
 
 
 DATA_ROOT = get_data_dir()
@@ -249,68 +248,6 @@ def render_meme_section(submission_id: int, markdown_key: str):
             st.error("Bitte einen Link eingeben.")
 
 
-def render_answer_sheet_manager(sheet_context: SheetContext | None) -> None:
-    with st.sidebar.expander("Lösungsblatt hinterlegen", expanded=False):
-        if not sheet_context:
-            st.info("Bitte wähle zuerst einen Arbeitsordner, um ein Lösungsblatt zu speichern.")
-            return
-
-        sheet_id = sheet_context.sheet_id
-        if sheet_id is None:
-            st.info(
-                "Dieses Blatt ist noch nicht im System registriert. Scanne die Abgaben einmal, "
-                "damit ein Lösungsblatt gespeichert werden kann."
-            )
-            return
-
-        current_path = get_answer_sheet_path(sheet_id)
-        if current_path:
-            path_obj = Path(current_path)
-            if path_obj.exists():
-                st.success(f"Aktuell gespeichert: {path_obj.name}")
-                st.caption(str(path_obj))
-            else:
-                st.warning("Verknüpftes Lösungsblatt wurde nicht gefunden. Bitte neu hochladen.")
-                st.caption(current_path)
-        else:
-            st.info("Noch kein Lösungsblatt hinterlegt.")
-
-        uploaded_file = st.file_uploader(
-            "PDF auswählen",
-            type=["pdf"],
-            accept_multiple_files=False,
-            key="answer_sheet_uploader",
-        )
-
-        col_save, col_remove = st.columns([3, 2])
-
-        with col_save:
-            if st.button("Speichern", key="answer_sheet_save_btn"):
-                if uploaded_file is None:
-                    st.warning("Bitte zuerst eine PDF auswählen.")
-                else:
-                    target_dir = Path(sheet_context.root_path)
-                    target_dir.mkdir(parents=True, exist_ok=True)
-                    target_path = target_dir / "answer_sheet.pdf"
-                    uploaded_file.seek(0)
-                    target_path.write_bytes(uploaded_file.read())
-                    save_answer_sheet_path(sheet_id, str(target_path))
-                    st.success("Lösungsblatt gespeichert und verknüpft.")
-                    st.session_state["answer_sheet_saved_at"] = target_path.stat().st_mtime
-                    st.rerun()
-
-        with col_remove:
-            remove_disabled = current_path is None
-            if st.button(
-                "Entfernen",
-                key="answer_sheet_remove_btn",
-                disabled=remove_disabled,
-            ):
-                if current_path:
-                    Path(current_path).unlink(missing_ok=True)
-                    delete_answer_sheet_path(sheet_id)
-                    st.info("Lösungsblatt entfernt.")
-                    st.rerun()
 
 
 init_db()
@@ -321,7 +258,7 @@ render_archive_loader()
 current_root = handle_root_selection()
 maybe_rescan_current_root(current_root)
 sheet_context = resolve_sheet_context(current_root, get_sheet_id_by_name)
-render_answer_sheet_manager(sheet_context)
+render_answer_sheet_sidebar(sheet_context)
 
 raw_submissions = get_submissions()
 submissions = convert_submissions(raw_submissions)

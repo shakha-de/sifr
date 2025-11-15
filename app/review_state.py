@@ -88,32 +88,3 @@ class ReviewStateManager:
     def persist_submission_id(self, submission_id: int) -> None:
         st.session_state[self.SUBMISSION_STATE_KEY] = submission_id
         set_review_current_submission_id(submission_id)
-
-    # ------------------------------------------------------------------
-    # Answer sheet checkbox helpers
-    # ------------------------------------------------------------------
-    def answer_sheet_checkbox_setup(self, has_answer_sheet: bool):
-        key = f"review_show_answer_sheet_{self.sheet_id or 'unknown'}"
-        storage_key = f"review_answer_sheet_pref_{self.sheet_id or 'unknown'}"
-        saved_pref = load_grader_state(storage_key)
-        default_value = self._parse_bool(saved_pref, has_answer_sheet)
-
-        if key not in st.session_state:
-            st.session_state[key] = default_value
-        elif not has_answer_sheet and st.session_state[key]:
-            st.session_state[key] = False
-            save_grader_state(storage_key, "false")
-
-        def _on_change():
-            save_grader_state(
-                storage_key,
-                "true" if st.session_state[key] else "false",
-            )
-
-        return key, _on_change
-
-    @staticmethod
-    def _parse_bool(value: str | None, fallback: bool) -> bool:
-        if value is None:
-            return fallback
-        return value.lower() in {"true", "1", "yes"}

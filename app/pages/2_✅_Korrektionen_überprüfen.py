@@ -10,9 +10,10 @@ from db import (
     get_submissions,
     get_feedback,
     get_sheet_id_by_name,
-    get_answer_sheet_path,
 )
 from review_state import ReviewStateManager
+from helpers import SheetContext
+from answer_sheet import resolve_answer_sheet_status, setup_answer_sheet_toggle
 
 
 st.set_page_config(
@@ -34,6 +35,11 @@ if not current_root:
 
 current_sheet_name = Path(current_root).name
 current_sheet_id = get_sheet_id_by_name(current_sheet_name)
+sheet_context = SheetContext(
+    root_path=current_root,
+    sheet_name=current_sheet_name,
+    sheet_id=current_sheet_id,
+)
 state_manager = ReviewStateManager(current_root, current_sheet_id)
 state_manager.ensure_defaults()
 
@@ -163,10 +169,11 @@ st.sidebar.markdown(f"""Aufgabe # {exercise_number}
 
 # Load feedback + answer sheet info
 feedback = get_feedback(submission_id)
-answer_sheet_path = get_answer_sheet_path(current_sheet_id) if current_sheet_id else None
-
-checkbox_key, checkbox_on_change = state_manager.answer_sheet_checkbox_setup(
-    bool(answer_sheet_path)
+answer_sheet_status = resolve_answer_sheet_status(sheet_context)
+checkbox_key, checkbox_on_change = setup_answer_sheet_toggle(
+    key_prefix="review",
+    sheet_id=answer_sheet_status.sheet_id,
+    has_answer_sheet=answer_sheet_status.exists_on_disk,
 )
 
 show_answer_sheet = st.sidebar.checkbox(
@@ -227,10 +234,10 @@ with col2:
 
 if show_answer_sheet and col3 is not None:
     with col3:
-        if answer_sheet_path and Path(answer_sheet_path).exists():
+        if answer_sheet_status.effective_path:
             try:
                 pdf_viewer(
-                    answer_sheet_path,
+                    str(answer_sheet_status.effective_path),
                     resolution_boost=2,
                     width="100%",
                     render_text=True,
@@ -238,7 +245,8 @@ if show_answer_sheet and col3 is not None:
                 )
             except Exception as error:
                 st.error(f"Fehler beim Anzeigen des Lösungsblatts: {error}")
-        elif answer_sheet_path:
+        elif answer_sheet_status.configured_path:
             st.warning("Gespeichertes Lösungsblatt wurde nicht gefunden.")
+            st.caption(str(answer_sheet_status.configured_path))
         else:
             st.info("Kein Lösungsblatt für dieses Blatt hinterlegt.")
