@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 
+import pytest
+
 
 @contextmanager
 def _connect(db_module):
@@ -158,3 +160,40 @@ def test_step_review_current_submission_handles_navigation(db_module):
         db_module.step_review_current_submission(-5, exercise_code="Exercise-2")
         == submissions[2]
     )
+
+
+def test_grader_state_roundtrip(db_module):
+    assert db_module.load_grader_state("missing", "fallback") == "fallback"
+
+    db_module.save_grader_state("missing", "stored")
+    assert db_module.load_grader_state("missing") == "stored"
+
+    db_module.delete_grader_state("missing")
+    assert db_module.load_grader_state("missing") is None
+
+
+def test_review_current_submission_defaults_on_invalid_state(db_module):
+    key = "review_current_submission_id"
+    db_module.save_grader_state(key, "not-a-number")
+
+    assert db_module.get_review_current_submission_id(default=42) == 42
+
+
+def test_get_review_submission_ids_filtering(db_module):
+    with _connect(db_module) as conn:
+        sheet_id = _insert_sheet(conn)
+        exercise1 = _insert_exercise(conn, sheet_id, "Exercise-1")
+        exercise2 = _insert_exercise(conn, sheet_id, "Exercise-2")
+        submissions = [
+            _insert_submission(conn, sheet_id, exercise1, idx=1),
+            _insert_submission(conn, sheet_id, exercise1, idx=2),
+            _insert_submission(conn, sheet_id, exercise2, idx=3),
+        ]
+
+    assert db_module.get_review_submission_ids() == submissions
+    assert db_module.get_review_submission_ids("Exercise-2") == [submissions[2]]
+
+
+def test_step_review_current_submission_errors_when_no_submissions(db_module):
+    with pytest.raises(ValueError):
+        db_module.step_review_current_submission(1)
