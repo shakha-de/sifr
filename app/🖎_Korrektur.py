@@ -484,6 +484,7 @@ with right_col:
         "Feedback PDF generieren",
         key=f"generate_feedback_{submission_id}",
         type="primary",
+        use_container_width=True
     ):
         sheet_name = sheet_context.sheet_name if sheet_context else os.path.basename(str(current_root))
         sheet_match = re.search(r"\d+", sheet_name)
