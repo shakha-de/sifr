@@ -7,17 +7,20 @@ import streamlit as st
 try:
     from app.db import (
         add_error_code,
-        delete_error_code,
+        delete_error_code_by_id,
+        update_error_code,
         get_error_codes,
         get_sheets,
     )
 except ImportError:  # pragma: no cover - fallback when running via "streamlit run app/..."
     from db import (
         add_error_code,
-        delete_error_code,
+        delete_error_code_by_id,
+        update_error_code,
         get_error_codes,
         get_sheets,
     )
+import pandas as pd
 
 
 st.set_page_config(
@@ -98,23 +101,65 @@ with st.form("add_error_code_form"):
 
 st.divider()
 
-st.subheader("Vorhandene Fehlercodes")
+st.subheader("Vorhandene Fehlercodes bearbeiten")
 error_codes = get_error_codes(selected_sheet_id)
 
 if not error_codes:
     st.info("Noch keine Fehlercodes vorhanden.")
 else:
-    for code, desc, abzug, komm in error_codes:
-        with st.container():
-            col_info, col_actions = st.columns([5, 1])
-            with col_info:
-                st.markdown(
-                    f"**{code}** — {desc}<br/>Abzug: **{abzug:g}** Punkte"
-                    + (f"<br/><small>{komm}</small>" if komm else ""),
-                    unsafe_allow_html=True,
-                )
-            with col_actions:
-                if st.button("Löschen", key=f"del_{selected_sheet_id}_{code}", type="secondary"):
-                    delete_error_code(code, sheet_id=selected_sheet_id)
-                    st.success(f"{code} gelöscht.")
-                    st.rerun()
+    # Convert to DataFrame for editing
+    df = pd.DataFrame(error_codes, columns=["id", "Code", "Beschreibung", "Abzug", "Kommentar"])
+    
+    # Configure column config
+    column_config = {
+        "id": None, # Hide ID
+        "Code": st.column_config.TextColumn("Code", required=True),
+        "Beschreibung": st.column_config.TextColumn("Beschreibung", required=True),
+        "Abzug": st.column_config.NumberColumn("Abzug", min_value=0.0, step=0.5, required=True),
+        "Kommentar": st.column_config.TextColumn("Kommentar"),
+    }
+
+    edited_df = st.data_editor(
+        df,
+        column_config=column_config,
+        use_container_width=True,
+        hide_index=True,
+        num_rows="dynamic",
+        key="error_codes_editor"
+    )
+
+    # Detect changes
+    if st.button("Änderungen speichern", type="primary"):
+        try:
+            # 1. Handle deletions
+            # Find IDs that were in original but not in edited
+            original_ids = set(df["id"])
+            edited_ids = set(edited_df["id"].dropna()) # dropna because new rows have NaN id
+            
+            ids_to_delete = original_ids - edited_ids
+            for eid in ids_to_delete:
+                delete_error_code_by_id(eid)
+
+            # 2. Handle updates and additions
+            for index, row in edited_df.iterrows():
+                eid = row["id"]
+                code = row["Code"]
+                desc = row["Beschreibung"]
+                abzug = row["Abzug"]
+                komm = row["Kommentar"]
+                
+                if pd.isna(eid):
+                    # New row
+                    if code and desc:
+                        add_error_code(selected_sheet_id, code, desc, abzug, komm)
+                else:
+                    # Update existing
+                    # Check if changed? For simplicity, just update all present
+                    if eid in original_ids:
+                         update_error_code(eid, code, desc, abzug, komm)
+            
+            st.success("Änderungen gespeichert!")
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"Fehler beim Speichern: {e}")

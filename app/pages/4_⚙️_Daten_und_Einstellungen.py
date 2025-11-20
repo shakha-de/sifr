@@ -5,7 +5,12 @@ from pathlib import Path
 import streamlit as st
 
 from answer_sheet import render_answer_sheet_sidebar
-from db import get_sheet_id_by_name, get_submissions, save_exercise_max_points
+from db import (
+    get_sheet_id_by_name,
+    get_submissions,
+    save_exercise_max_points,
+    scan_and_insert_submissions,
+)
 from helpers import convert_submissions, resolve_sheet_context
 from korrektur_utils import build_exercise_options
 from sidebar_panels import ensure_session_defaults, render_archive_loader
@@ -23,7 +28,14 @@ render_archive_loader()
 
 current_root = st.session_state.get("current_root")
 if current_root:
-    st.success(f"Aktueller Arbeitsordner: {Path(current_root).name}")
+    col1, col2 = st.columns([3, 1], vertical_alignment="center")
+    with col1:
+        st.success(f"Aktueller Arbeitsordner: {Path(current_root).name}")
+    with col2:
+        if st.button("Neu scannen", icon=":material/refresh:", help="Durchsucht den Ordner erneut nach Abgaben"):
+            scan_and_insert_submissions(current_root)
+            st.toast("Scan abgeschlossen!", icon="✅")
+            st.rerun()
 else:
     st.warning("Noch kein Arbeitsordner gewählt. Lade ein Archive oder wähle einen Ordner.")
 

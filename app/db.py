@@ -396,10 +396,10 @@ def get_error_codes(sheet_id: int | None = None):
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
     if sheet_id is None:
-        cursor.execute('SELECT code, description, deduction, comment FROM error_codes ORDER BY code COLLATE NOCASE')
+        cursor.execute('SELECT id, code, description, deduction, comment FROM error_codes ORDER BY code COLLATE NOCASE')
     else:
         cursor.execute(
-            'SELECT code, description, deduction, comment FROM error_codes WHERE sheet_id = ? ORDER BY code COLLATE NOCASE',
+            'SELECT id, code, description, deduction, comment FROM error_codes WHERE sheet_id = ? ORDER BY code COLLATE NOCASE',
             (sheet_id,)
         )
     rows = cursor.fetchall()
@@ -440,6 +440,27 @@ def delete_error_code(code, sheet_id: int | None = None):
         cursor.execute('DELETE FROM error_codes WHERE code = ?', (code,))
     else:
         cursor.execute('DELETE FROM error_codes WHERE code = ? AND sheet_id = ?', (code, sheet_id))
+    conn.commit()
+    conn.close()
+
+def delete_error_code_by_id(error_code_id):
+    conn = sqlite3.connect(_resolve_db_path())
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM error_codes WHERE id = ?', (error_code_id,))
+    conn.commit()
+    conn.close()
+
+def update_error_code(error_code_id, code, description, deduction, comment):
+    conn = sqlite3.connect(_resolve_db_path())
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        UPDATE error_codes
+        SET code = ?, description = ?, deduction = ?, comment = ?
+        WHERE id = ?
+        ''',
+        (code, description, deduction, comment, error_code_id)
+    )
     conn.commit()
     conn.close()
 

@@ -73,6 +73,17 @@ filtered_submissions = [
     row for row in submissions if selected_exercise == "Alle" or row[4] == selected_exercise
 ]
 
+# Show progress bar in sidebar
+total_count = len(filtered_submissions)
+corrected_count = sum(
+    1 for row in filtered_submissions 
+    if row[5] in ("FINAL_MARK", "PROVISIONAL_MARK") or row[0] in feedback_ids
+)
+
+if total_count > 0:
+    progress = corrected_count / total_count
+    st.sidebar.progress(progress, text=f"{corrected_count} / {total_count} erledigt")
+
 # Build submission labels and map
 def build_submission_label(row):
     submission_id = row[0]

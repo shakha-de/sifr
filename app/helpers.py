@@ -46,6 +46,15 @@ class ErrorCode:
 
     @classmethod
     def from_row(cls, row: Sequence):
+        # Handle 5-element tuple (id, code, desc, ded, comm) from updated get_error_codes
+        if len(row) == 5:
+            return cls(
+                code=row[1],
+                description=row[2],
+                deduction=float(row[3] or 0.0),
+                comment=row[4],
+            )
+        # Fallback for 4-element tuple (code, desc, ded, comm)
         return cls(
             code=row[0],
             description=row[1],
