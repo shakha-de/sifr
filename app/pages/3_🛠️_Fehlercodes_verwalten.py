@@ -108,7 +108,7 @@ if not error_codes:
     st.info("Noch keine Fehlercodes vorhanden.")
 else:
     # Convert to DataFrame for editing
-    df = pd.DataFrame(error_codes, columns=["id", "Code", "Beschreibung", "Abzug", "Kommentar"])
+    df = pd.DataFrame.from_records(error_codes, columns=["id", "Code", "Beschreibung", "Abzug", "Kommentar"])
     
     # Configure column config
     column_config = {
@@ -148,9 +148,8 @@ else:
                 abzug = row["Abzug"]
                 komm = row["Kommentar"]
                 
-                if pd.isna(eid):
-                    # New row
-                    if code and desc:
+                if bool(pd.isna(eid)):
+                    if isinstance(code, str) and isinstance(desc, str) and code and desc:
                         add_error_code(selected_sheet_id, code, desc, abzug, komm)
                 else:
                     # Update existing

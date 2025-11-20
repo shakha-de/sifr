@@ -33,6 +33,11 @@ We strongly recommend isolating the environment with either [`uv`](https://githu
 	docker run --rm -p 8501:8501 -v "$PWD/data:/app/data" -e SIFR_DATA_DIR=/app/data sifr
 	```
 
+Alternatively, you can use Docker Compose:
+```bash
+docker-compose up --build
+```
+
 This keeps host dependencies clean and makes it easy to ship a ready-to-run image.
 
 ### Option 3: Classic `pip` (fallback)

@@ -1,0 +1,14 @@
+services:
+  sifr:
+    build: .
+    image: sifr
+    container_name: sifr_app
+    ports:
+      - "8501:8501"
+    volumes:
+      # Maps the local data directory to the container.
+      # You can change './data' to any absolute path if needed, 
+      # e.g. '/home/shakha/sifr-new'
+      - ./data:/app/data
+    environment:
+      - SIFR_DATA_DIR=/app/data
