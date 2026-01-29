@@ -48,9 +48,15 @@ def render_archive_loader() -> None:
             else:
                 with st.spinner("Entpacke Archive..."):
                     try:
+                        from datetime import datetime
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        safe_name = Path(uploaded_file.name).stem
+                        target_dir = DATA_ROOT / f"{safe_name}_{timestamp}"
+                        target_dir.mkdir(parents=True, exist_ok=True)
+                        
                         uploaded_file.seek(0)
                         with tarfile.open(fileobj=uploaded_file, mode="r:gz") as tar:
-                            tar.extractall(str(DATA_ROOT), filter="data")
+                            tar.extractall(str(target_dir), filter="data")
                         candidates = find_candidate_roots(DATA_ROOT)
                         if candidates:
                             st.session_state.available_roots = candidates

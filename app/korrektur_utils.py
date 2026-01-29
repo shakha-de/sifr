@@ -35,22 +35,38 @@ def find_candidate_roots(base_dir: os.PathLike[str] | str) -> list[str]:
         return []
 
     candidates: list[str] = []
-    for item_path in base_path.iterdir():
-        if not item_path.is_dir():
-            continue
-
+    
+    # helper to check if a directory is a sheet root
+    def is_sheet_root(path: Path) -> bool:
+        if not path.is_dir():
+             return False
         try:
-            entries = list(item_path.iterdir())
+            entries = list(path.iterdir())
         except PermissionError:
-            continue
-
-        has_marks = (item_path / "marks.csv").exists()
+            return False
+            
+        has_marks = (path / "marks.csv").exists()
         has_exercises = any(
             entry.is_dir() and entry.name.lower().startswith(("excercise-", "exercise-"))
             for entry in entries
         )
-        if has_marks or has_exercises:
+        return has_marks or has_exercises
+
+    # Level 1 check
+    for item_path in base_path.iterdir():
+        if not item_path.is_dir():
+            continue
+            
+        if is_sheet_root(item_path):
             candidates.append(str(item_path.resolve()))
+        
+        # Level 2 check
+        try:
+            for sub_item in item_path.iterdir():
+                if sub_item.is_dir() and is_sheet_root(sub_item):
+                    candidates.append(str(sub_item.resolve()))
+        except PermissionError:
+            continue
 
     return sorted(set(candidates))
 
