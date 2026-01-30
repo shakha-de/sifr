@@ -2,6 +2,7 @@ import csv
 import os
 from pathlib import Path
 import sqlite3
+import streamlit as st
 
 from config import get_data_dir
 
@@ -174,72 +175,125 @@ def scan_and_insert_submissions(root_dir):
     cursor.execute('SELECT id FROM sheets WHERE name = ?', (sheet_name,))
     sheet_row = cursor.fetchone()
     if not sheet_row:
-        # Insert new sheet if not exists
         cursor.execute('INSERT INTO sheets (name) VALUES (?)', (sheet_name,))
         sheet_id = cursor.lastrowid
     else:
         sheet_id = sheet_row[0]
     
-    # Remember current submission status per path to preserve correction progress
-    cursor.execute('SELECT path, status FROM submissions WHERE sheet_id = ?', (sheet_id,))
-    existing_status_by_path = {row[0]: row[1] for row in cursor.fetchall()}
+    # Pre-fetch all relevant data to avoid N+1 queries
+    # 1. Exercises
+    cursor.execute('SELECT code, id FROM exercises WHERE sheet_id = ?', (sheet_id,))
+    exercise_map = {row[0]: row[1] for row in cursor.fetchall()} # code -> id
+    
+    # 2. Existing Submissions
+    cursor.execute('SELECT path, id, status, group_name, submitter, exercise_id FROM submissions WHERE sheet_id = ?', (sheet_id,))
+    # map path -> dict of details
+    existing_submissions = {
+        row[0]: {
+            'id': row[1], 'status': row[2], 'group_name': row[3], 
+            'submitter': row[4], 'exercise_id': row[5]
+        } 
+        for row in cursor.fetchall()
+    }
     
     csv_path = os.path.join(root_dir, 'marks.csv')
     names = load_names_from_csv(csv_path) if os.path.exists(csv_path) else {}
     
     discovered_paths = set()
+    to_insert_exercises = []
+    to_insert_submissions = [] # list of tuples
+    to_update_submissions = [] # list of tuples
+    
+    # We might find new exercises, track them to avoid dupes in this run
+    new_exercises_cache = {}
 
     for exercise_dir in os.listdir(root_dir):
         exercise_path = os.path.join(root_dir, exercise_dir)
-        if os.path.isdir(exercise_path) and exercise_dir.lower().startswith(('excercise-', 'exercise-')):
-            exercise_code = exercise_dir
-            # Get exercise_id
-            cursor.execute('SELECT id FROM exercises WHERE sheet_id = ? AND code = ?', (sheet_id, exercise_code))
-            exercise_row = cursor.fetchone()
-            if not exercise_row:
-                # Insert new exercise if not exists
-                cursor.execute('INSERT INTO exercises (sheet_id, code) VALUES (?, ?)', (sheet_id, exercise_code))
-                exercise_id = cursor.lastrowid
+        if not os.path.isdir(exercise_path):
+            continue
+            
+        # Check if it looks like an exercise
+        lower_name = exercise_dir.lower()
+        if not (lower_name.startswith('excercise-') or lower_name.startswith('exercise-')):
+             continue
+
+        exercise_code = exercise_dir
+        
+        # Resolve Exercise ID
+        if exercise_code in exercise_map:
+            exercise_id = exercise_map[exercise_code]
+        elif exercise_code in new_exercises_cache:
+            exercise_id = new_exercises_cache[exercise_code]
+        else:
+            # Create new exercise immediately to get ID (simplest for now, usually few exercises)
+            cursor.execute('INSERT INTO exercises (sheet_id, code) VALUES (?, ?)', (sheet_id, exercise_code))
+            exercise_id = cursor.lastrowid
+            exercise_map[exercise_code] = exercise_id
+            new_exercises_cache[exercise_code] = exercise_id
+
+        for submission_dir in os.listdir(exercise_path):
+            submission_path = os.path.join(exercise_path, submission_dir)
+            if not os.path.isdir(submission_path):
+                continue
+                
+            # Extract submission details
+            parts = submission_dir.split('_')
+            submissionid = parts[-1] if parts else submission_dir
+            submitter = names.get(submissionid, submission_dir)
+            group_name = submission_dir
+            
+            discovered_paths.add(submission_path)
+            
+            if submission_path in existing_submissions:
+                # Check if update needed? For now we update just in case metadata changed
+                # (except status, which we preserve unless it's missing)
+                existing = existing_submissions[submission_path]
+                current_status = existing['status']
+                
+                # Update if critical fields differ
+                if (existing['group_name'] != group_name or 
+                    existing['submitter'] != submitter or 
+                    existing['exercise_id'] != exercise_id):
+                    
+                    to_update_submissions.append((
+                        group_name, submitter, sheet_id, exercise_id, current_status, submission_path
+                    ))
             else:
-                exercise_id = exercise_row[0]
-            for submission_dir in os.listdir(exercise_path):
-                submission_path = os.path.join(exercise_path, submission_dir)
-                if os.path.isdir(submission_path):
-                    # Extract submissionid from folder name (last part after last underscore)
-                    parts = submission_dir.split('_')
-                    submissionid = parts[-1] if parts else submission_dir
-                    submitter = names.get(submissionid, submission_dir)
-                    status = existing_status_by_path.get(submission_path, 'SUBMITTED')
-                    
-                    # Check if submission already exists
-                    cursor.execute('SELECT id FROM submissions WHERE path = ?', (submission_path,))
-                    existing = cursor.fetchone()
-                    
-                    if existing:
-                        # Update existing submission
-                        cursor.execute(
-                            '''UPDATE submissions SET
-                                group_name = ?, submitter = ?, sheet_id = ?, exercise_id = ?, status = ?
-                                WHERE path = ?''',
-                            (submission_dir, submitter, sheet_id, exercise_id, status, submission_path)
-                        )
-                    else:
-                        # Insert new submission
-                        cursor.execute(
-                            '''INSERT INTO submissions (path, group_name, submitter, sheet_id, exercise_id, status)
-                            VALUES (?, ?, ?, ?, ?, ?)''',
-                            (submission_path, submission_dir, submitter, sheet_id, exercise_id, status)
-                        )
-                    discovered_paths.add(submission_path)
+                # New submission
+                to_insert_submissions.append((
+                    submission_path, group_name, submitter, sheet_id, exercise_id, 'SUBMITTED'
+                ))
+
+    # Batch Execution
+    if to_insert_submissions:
+        cursor.executemany(
+            '''INSERT INTO submissions (path, group_name, submitter, sheet_id, exercise_id, status)
+               VALUES (?, ?, ?, ?, ?, ?)''',
+            to_insert_submissions
+        )
+        
+    if to_update_submissions:
+        cursor.executemany(
+            '''UPDATE submissions SET
+               group_name = ?, submitter = ?, sheet_id = ?, exercise_id = ?, status = ?
+               WHERE path = ?''',
+            to_update_submissions
+        )
 
     # Remove submissions that no longer exist on disk
-    obsolete_paths = set(existing_status_by_path.keys()) - discovered_paths
+    obsolete_paths = set(existing_submissions.keys()) - discovered_paths
     if obsolete_paths:
         cursor.executemany('DELETE FROM submissions WHERE path = ?', [(path,) for path in obsolete_paths])
     
     conn.commit()
     conn.close()
+    
+    # Invalidate caches
+    get_submissions.clear()
+    get_sheets.clear()
+    get_exercise_max_points.clear()
 
+@st.cache_data
 def get_submissions(exercise_code: str | None = None):
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
@@ -343,7 +397,9 @@ def save_feedback_with_submission(
 
     conn.commit()
     conn.close()
-
+    
+    # Invalidate
+    get_submissions.clear()
 
 def save_answer_sheet_path(sheet_id: int, file_path: str) -> None:
     conn = sqlite3.connect(_resolve_db_path())
@@ -372,6 +428,7 @@ def delete_answer_sheet_path(sheet_id: int) -> None:
     conn.commit()
     conn.close()
 
+@st.cache_data
 def get_sheets():
     """Return all stored sheets ordered by name."""
     conn = sqlite3.connect(_resolve_db_path())
@@ -392,6 +449,7 @@ def get_sheet_id_by_name(sheet_name: str) -> int | None:
     return row[0] if row else None
 
 
+@st.cache_data
 def get_error_codes(sheet_id: int | None = None):
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
@@ -406,6 +464,7 @@ def get_error_codes(sheet_id: int | None = None):
     conn.close()
     return rows
 
+@st.cache_data
 def get_exercise_max_points():
     conn = sqlite3.connect(_resolve_db_path())
     cursor = conn.cursor()
@@ -422,6 +481,7 @@ def save_exercise_max_points(exercise, max_points):
                    (max_points, exercise))
     conn.commit()
     conn.close()
+    get_exercise_max_points.clear()
 
 def add_error_code(sheet_id, code, description, deduction, comment):
     conn = sqlite3.connect(_resolve_db_path())
@@ -432,6 +492,7 @@ def add_error_code(sheet_id, code, description, deduction, comment):
     )
     conn.commit()
     conn.close()
+    get_error_codes.clear()
 
 def delete_error_code(code, sheet_id: int | None = None):
     conn = sqlite3.connect(_resolve_db_path())
@@ -442,6 +503,7 @@ def delete_error_code(code, sheet_id: int | None = None):
         cursor.execute('DELETE FROM error_codes WHERE code = ? AND sheet_id = ?', (code, sheet_id))
     conn.commit()
     conn.close()
+    get_error_codes.clear()
 
 def delete_error_code_by_id(error_code_id):
     conn = sqlite3.connect(_resolve_db_path())
@@ -449,6 +511,7 @@ def delete_error_code_by_id(error_code_id):
     cursor.execute('DELETE FROM error_codes WHERE id = ?', (error_code_id,))
     conn.commit()
     conn.close()
+    get_error_codes.clear()
 
 def update_error_code(error_code_id, code, description, deduction, comment):
     conn = sqlite3.connect(_resolve_db_path())
@@ -463,6 +526,7 @@ def update_error_code(error_code_id, code, description, deduction, comment):
     )
     conn.commit()
     conn.close()
+    get_error_codes.clear()
 
 def save_grader_state(key, value):
     """Save a key-value pair in the grader_state table."""

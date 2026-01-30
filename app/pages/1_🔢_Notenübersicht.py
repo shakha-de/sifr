@@ -28,36 +28,75 @@ if not marks_path.exists():
     st.error(f"marks.csv not found in {current_root}")
     st.stop()
 
+@st.cache_data
+def load_csv_data(path: Path, mtime: float):
+    # mtime is passed just to invalidate cache on file change
+    try:
+        df = pd.read_csv(path)
+        # Clean column names
+        df.columns = df.columns.str.replace('^#\s*', '', regex=True).str.strip()
+        return df
+    except Exception as e:
+        return None
+
 # Load the CSV
 try:
-    df = pd.read_csv(marks_path)
+    current_mtime = marks_path.stat().st_mtime
+    df = load_csv_data(marks_path, current_mtime)
+    
+    if df is None:
+        st.error(f"Error loading CSV from {marks_path}")
+        st.stop()
+        
     st.subheader("CSV Editor")
-    edited_df = st.data_editor(df, num_rows="dynamic")
+    edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
 
     st.divider()
-    st.subheader("Statistiken")
+    st.subheader("📊 Statistiken")
     
     if "points" in edited_df.columns:
         # Convert to numeric, coercing errors
         points_series = pd.to_numeric(edited_df["points"], errors="coerce").dropna()
         
-        if not points_series.empty:
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Durchschnitt", f"{points_series.mean():.2f}")
-            col2.metric("Median", f"{points_series.median():.2f}")
-            col3.metric("Min", f"{points_series.min():.2f}")
-            col4.metric("Max", f"{points_series.max():.2f}")
-            
-            st.caption("Punkteverteilung")
-            chart = alt.Chart(edited_df).mark_bar().encode(
-                x=alt.X("points", bin=True, title="Punkte"),
-                y=alt.Y("count()", title="Anzahl")
-            ).interactive()
-            st.altair_chart(chart, use_container_width=True)
-        else:
-            st.info("Keine numerischen Punkte gefunden.")
+        stat_col1, stat_col2 = st.columns([2, 1], gap="large")
+        
+        with stat_col1:
+            st.markdown("#### Punkteverteilung")
+            if not points_series.empty:
+                # Metrics Row
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Durchschnitt", f"{points_series.mean():.2f}")
+                m2.metric("Median", f"{points_series.median():.2f}")
+                m3.metric("Min", f"{points_series.min():.2f}")
+                m4.metric("Max", f"{points_series.max():.2f}")
+                
+                # Bar Chart
+                chart = alt.Chart(edited_df).mark_bar().encode(
+                    x=alt.X("points", bin=alt.Bin(maxbins=20), title="Punkte"),
+                    y=alt.Y("count()", title="Anzahl Abgaben"),
+                    tooltip=["count()", alt.Tooltip("points", bin=True, title="Punktebereich")]
+                ).interactive().properties(height=300)
+                st.altair_chart(chart, use_container_width=True)
+            else:
+                st.info("Keine numerischen Punkte vorhanden.")
+
+        with stat_col2:
+            st.markdown("#### Status")
+            if "status" in edited_df.columns:
+                status_counts = edited_df["status"].value_counts().reset_index()
+                status_counts.columns = ["status", "count"]
+                
+                status_chart = alt.Chart(status_counts).mark_arc(innerRadius=50).encode(
+                    theta="count",
+                    color=alt.Color("status", legend=alt.Legend(title="Status")),
+                    tooltip=["status", "count"]
+                ).properties(height=300)
+                st.altair_chart(status_chart, use_container_width=True)
+            else:
+                st.warning("Keine 'status' Spalte gefunden.")
+                
     else:
-        st.warning("Spalte 'points' nicht gefunden.")
+        st.warning("Spalte 'points' nicht gefunden. Bitte überprüfen Sie die CSV-Kopfzeile.")
 
     st.divider()
     st.subheader("Export")
