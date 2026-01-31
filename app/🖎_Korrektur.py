@@ -28,7 +28,8 @@ from utils import (
     generate_feedback_pdf,
     update_marks_csv,
     patch_streamlit_html,
-    get_markdown_placeholder_text)
+    get_markdown_placeholder_text,
+    get_markdown_keybindings_js)
 from helpers import (
     ErrorCode,
     SheetContext,
@@ -62,6 +63,7 @@ st.set_page_config(
     )
 
 patch_streamlit_html()
+st.components.v1.html(get_markdown_keybindings_js(), height=0)
 
 
 def handle_root_selection() -> str | None:

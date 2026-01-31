@@ -131,3 +131,47 @@ def patch_streamlit_html():
             f.write(content)
 
         logger.info("✔ Streamlit HTML gepatcht: lang=de gesetzt")
+
+
+def get_markdown_keybindings_js() -> str:
+    """Returns a JavaScript snippet that adds markdown keybindings to textareas."""
+    return """
+<script>
+const patchTextarea = (textarea) => {
+    if (textarea.dataset.sifrKeybindings) return;
+    textarea.dataset.sifrKeybindings = 'true';
+    textarea.addEventListener('keydown', function(e) {
+        if (e.ctrlKey && !e.shiftKey && !e.altKey) {
+            let decoration = null;
+            if (e.key === 'b') decoration = { prefix: '**', suffix: '**' };
+            else if (e.key === 'i') decoration = { prefix: '*', suffix: '*' };
+            else if (e.key === 'm') decoration = { prefix: '$$', suffix: '$$' };
+            
+            if (decoration) {
+                e.preventDefault();
+                const start = this.selectionStart;
+                const end = this.selectionEnd;
+                const text = this.value;
+                const selectedText = text.substring(start, end);
+                const before = text.substring(0, start);
+                const after = text.substring(end);
+
+                this.value = before + decoration.prefix + selectedText + decoration.suffix + after;
+                this.selectionStart = start + decoration.prefix.length;
+                this.selectionEnd = end + decoration.prefix.length;
+                
+                // Important: trigger 'input' so Streamlit notices the change
+                this.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        }
+    });
+};
+
+// Periodic check for new textareas (more robust than MutationObserver in some Streamlit versions)
+setInterval(() => {
+    if (window.parent && window.parent.document) {
+        window.parent.document.querySelectorAll('textarea').forEach(patchTextarea);
+    }
+}, 1000);
+</script>
+"""
